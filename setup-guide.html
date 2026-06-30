@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>セットアップガイド</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Segoe UI','Hiragino Sans','Meiryo',sans-serif; background:#f0f4ff; color:#1e293b; padding: 24px; }
+    .container { max-width: 800px; margin: 0 auto; }
+    h1 { font-size: 1.8rem; color: #4f8ef7; margin-bottom: 8px; }
+    h2 { font-size: 1.2rem; color: #4f8ef7; margin: 28px 0 10px; }
+    .step { background: white; border-radius: 16px; padding: 24px; margin-bottom: 16px; box-shadow: 0 4px 20px rgba(79,142,247,.1); }
+    .step-num { display: inline-block; background: #4f8ef7; color: white; width: 32px; height: 32px; border-radius: 50%; text-align: center; line-height: 32px; font-weight: 700; margin-right: 8px; }
+    p { line-height: 1.7; color: #475569; margin: 8px 0; }
+    code { background: #f1f5f9; padding: 2px 8px; border-radius: 6px; font-family: monospace; font-size: .9rem; }
+    pre { background: #1e293b; color: #e2e8f0; padding: 16px; border-radius: 12px; overflow: auto; font-size: .85rem; margin: 12px 0; }
+    a { color: #4f8ef7; }
+    .note { background: #fffbeb; border-left: 4px solid #f59e0b; padding: 12px 16px; border-radius: 0 8px 8px 0; margin: 12px 0; }
+    .note p { color: #78350f; }
+    ul { padding-left: 20px; color: #475569; }
+    li { margin: 6px 0; line-height: 1.6; }
+  </style>
+</head>
+<body>
+<div class="container">
+  <h1>📚 英単語チャレンジ セットアップガイド</h1>
+  <p>このガイドに従えば、無料でウェブアプリを公開できます（約30分）。</p>
+
+  <div class="step">
+    <h2><span class="step-num">1</span> Googleアカウントで Firebase にアクセス</h2>
+    <p><a href="https://console.firebase.google.com" target="_blank">https://console.firebase.google.com</a> を開き、<strong>「プロジェクトを追加」</strong>をクリック。</p>
+    <p>プロジェクト名（例：<code>eigo-challenge</code>）を入力し、Google アナリティクスは「無効」でOKです。</p>
+  </div>
+
+  <div class="step">
+    <h2><span class="step-num">2</span> Firestore データベースを作成</h2>
+    <p>左メニューの <strong>「Firestore Database」</strong> → 「データベースの作成」をクリック。</p>
+    <p>ロケーションは <strong>asia-northeast1（東京）</strong> を選択してください。</p>
+    <p>「本番モードで開始」を選んで作成します。</p>
+  </div>
+
+  <div class="step">
+    <h2><span class="step-num">3</span> アプリの設定コードを取得</h2>
+    <p>プロジェクトの <strong>「設定（歯車アイコン）」→「プロジェクトの設定」→「マイアプリ」</strong> から <strong>「ウェブアプリを追加（&lt;/&gt;）」</strong> をクリック。</p>
+    <p>以下のような設定コードが表示されます：</p>
+    <pre>const firebaseConfig = {
+  apiKey: "AIzaSy...",
+  authDomain: "eigo-challenge.firebaseapp.com",
+  projectId: "eigo-challenge",
+  storageBucket: "eigo-challenge.appspot.com",
+  messagingSenderId: "123456789",
+  appId: "1:123456789:web:abc123"
+};</pre>
+    <p>この内容を <strong>index.html</strong> の該当部分（<code>YOUR_API_KEY</code> などの箇所）に貼り付けてください。</p>
+  </div>
+
+  <div class="step">
+    <h2><span class="step-num">4</span> セキュリティルールを設定</h2>
+    <p>Firestore の <strong>「ルール」タブ</strong> を開き、以下のルールを貼り付けて「公開」をクリック：</p>
+    <pre>rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /students/{studentId} {
+      allow read, write: if true;
+    }
+    match /words/{wordId} {
+      allow read: if true;
+      allow write: if true;
+    }
+  }
+}</pre>
+    <div class="note"><p>⚠️ これは簡易ルールです。誰でも書き込める状態になっています。本格運用時はFirebase Authenticationを導入することをお勧めします。</p></div>
+  </div>
+
+  <div class="step">
+    <h2><span class="step-num">5</span> Firebase Hosting でサイトを公開</h2>
+    <p>以下の2つの方法があります：</p>
+    <h3 style="margin:12px 0 8px;color:#475569">方法A：Firebase Hosting（推奨・無料）</h3>
+    <ul>
+      <li>Node.js をインストール（<a href="https://nodejs.org" target="_blank">nodejs.org</a>）</li>
+      <li>ターミナルで以下を実行：</li>
+    </ul>
+    <pre>npm install -g firebase-tools
+firebase login
+firebase init hosting
+firebase deploy</pre>
+    <p><code>firebase init hosting</code> では：</p>
+    <ul>
+      <li>「Use an existing project」→ 先ほど作ったプロジェクトを選択</li>
+      <li>「What do you want to use as your public directory?」→ <code>.</code> と入力（Enterで確定）</li>
+      <li>「Configure as a single-page app?」→ <code>N</code></li>
+      <li>「Set up automatic builds?」→ <code>N</code></li>
+    </ul>
+    <p>完了すると <code>https://eigo-challenge.web.app</code> のようなURLが発行されます！</p>
+
+    <h3 style="margin:16px 0 8px;color:#475569">方法B：Netlify Drop（最も簡単・無料）</h3>
+    <ul>
+      <li><a href="https://app.netlify.com/drop" target="_blank">https://app.netlify.com/drop</a> を開く</li>
+      <li>「英単語練習アプリ」フォルダをブラウザにドラッグ＆ドロップするだけ！</li>
+      <li>すぐにURLが発行されます</li>
+    </ul>
+  </div>
+
+  <div class="step">
+    <h2><span class="step-num">6</span> パスワードの変更</h2>
+    <p><strong>app.js</strong> を開き、先頭の <code>CONFIG</code> を編集してください：</p>
+    <pre>const CONFIG = {
+  studentPassword: 'eigo2024',   // ← 生徒に教えるパスワード
+  teacherPassword: 'sensei2024', // ← 先生だけが知るパスワード
+  ...</pre>
+    <p>変更後、再度サイトをデプロイ（アップロード）してください。</p>
+  </div>
+
+  <div class="step">
+    <h2>✅ 完成！使い方まとめ</h2>
+    <ul>
+      <li>🎓 <strong>生徒</strong>：URLにアクセス → 生徒パスワードで入る → 名前・学年・クラスを登録 → 練習スタート</li>
+      <li>👩‍🏫 <strong>先生</strong>：URLにアクセス → 「先生」タブ → 先生パスワードで入る → 単語を登録</li>
+      <li>📝 <strong>単語登録</strong>：先生ダッシュボードで学年・クラス・レッスンを選び、英語と日本語を入力</li>
+      <li>🏆 <strong>ランク</strong>：ペンギン(0pt〜) → イルカ(100pt〜) → パンダ(300pt〜) → とら(600pt〜) → ユニコーン(1000pt〜)</li>
+    </ul>
+  </div>
+</div>
+</body>
+</html>
