@@ -571,6 +571,53 @@ function buildKeyboardHTML(word, typed) {
   `).join('');
 }
 
+// ===== 単語の色分け表示（打済=グレー / 次=オレンジ / 残り=黒） =====
+function buildWordColorHTML(word, typed) {
+  return word.en.split('').map((ch, i) => {
+    if (i < typed.length) {
+      return `<span style="color:#94a3b8">${ch}</span>`;
+    } else if (i === typed.length) {
+      return `<span style="color:#f97316;font-weight:900;text-decoration:underline">${ch}</span>`;
+    } else {
+      return `<span style="color:#1e293b">${ch}</span>`;
+    }
+  }).join(' ');
+}
+
+// ===== タイプした文字を1つずつ表示 =====
+function buildTypedRowHTML(typed) {
+  if (!typed) return '<span style="color:#94a3b8;font-style:italic">ここに入力してね</span>';
+  return `<span style="color:#1e293b">${typed.split('').join(' ')}</span><span class="th-cursor">|</span>`;
+}
+
+// ===== タイプ音（Web Audio API） =====
+let _audioCtx = null;
+function playTypeSound(isCorrect = false) {
+  try {
+    if (!_audioCtx) _audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const ctx = _audioCtx;
+    const osc  = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    if (isCorrect) {
+      osc.frequency.setValueAtTime(880, ctx.currentTime);
+      osc.frequency.exponentialRampToValueAtTime(1320, ctx.currentTime + 0.12);
+      gain.gain.setValueAtTime(0.25, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.18);
+      osc.start(ctx.currentTime);
+      osc.stop(ctx.currentTime + 0.18);
+    } else {
+      osc.frequency.setValueAtTime(600, ctx.currentTime);
+      osc.frequency.exponentialRampToValueAtTime(300, ctx.currentTime + 0.06);
+      gain.gain.setValueAtTime(0.15, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.08);
+      osc.start(ctx.currentTime);
+      osc.stop(ctx.currentTime + 0.08);
+    }
+  } catch(e) {}
+}
+
 function startTypingHint(words) {
   state.screen = 'typing-hint';
   const list = shuffle(words);
@@ -616,17 +663,20 @@ function renderTypingHint() {
         margin: 10px 14px 6px; padding: 16px 20px 12px;
         box-shadow: 0 6px 24px rgba(0,0,0,.2); text-align: center;
       }
-      .th-word-spaced {
-        font-size: 1.35rem; letter-spacing: 10px; color: #1e293b;
-        font-family: 'Courier New',monospace; margin-bottom: 4px;
-        font-weight: 400;
+      .th-word-color {
+        font-size: 1.4rem; font-family: 'Courier New',monospace;
+        letter-spacing: 4px; margin-bottom: 6px; font-weight: 700;
       }
-      .th-word-ja { font-size: 1.4rem; font-weight: 800; color: #1e293b; margin-bottom: 6px; }
-      .th-word-hint {
-        font-size: 1rem; font-weight: 700; letter-spacing: 4px;
-        color: #1e293b; text-decoration: underline;
-        font-family: 'Courier New',monospace;
+      .th-word-ja { font-size: 1.4rem; font-weight: 800; color: #1e293b; margin-bottom: 8px; }
+      .th-typed-row {
+        font-size: 1.1rem; font-family: 'Courier New',monospace;
+        letter-spacing: 4px; min-height: 28px; color: #1e293b; font-weight: 700;
       }
+      .th-cursor {
+        display: inline-block; color: #f97316; font-weight: 900;
+        animation: th-blink .7s step-end infinite;
+      }
+      @keyframes th-blink { 0%,100%{opacity:1} 50%{opacity:0} }
       .th-keyboard { padding: 2px 10px 0; flex: 1; }
       .th-kb-row { display: flex; justify-content: center; gap: 4px; margin-bottom: 4px; }
       .th-key {
@@ -648,13 +698,8 @@ function renderTypingHint() {
         gap: 8px; padding: 6px 14px 10px;
       }
       #type-input {
-        width: 190px; padding: 8px 14px; border-radius: 12px; border: none;
-        font-size: 1.05rem; font-weight: 700; text-align: center;
-        outline: none; background: rgba(255,255,255,.9); color: #1e293b;
-        letter-spacing: 2px;
+        width: 1px; height: 1px; opacity: 0; position: absolute;
       }
-      #type-input.correct { background: #bbf7d0; }
-      #type-input.wrong   { background: #fecaca; }
       .th-skip {
         background: rgba(255,255,255,.25); border: 2px solid rgba(255,255,255,.5);
         color: white; border-radius: 10px; padding: 7px 12px;
@@ -665,15 +710,15 @@ function renderTypingHint() {
         font-size: .8rem; cursor: pointer; padding: 6px 10px;
       }
     </style>
-    <div class="th-wrap">
+    <div class="th-wrap" onclick="document.getElementById('type-input')?.focus()">
       <div class="th-header">
         <div class="th-counter">${ts.index + 1}/${ts.list.length}</div>
         <div class="th-counter">${ts.correct}</div>
       </div>
       <div class="th-card">
-        <div class="th-word-spaced">${word.en.split('').join(' ')}</div>
+        <div class="th-word-color" id="word-color-area">${buildWordColorHTML(word, currentTyped)}</div>
         <div class="th-word-ja">${word.ja}</div>
-        <div class="th-word-hint" id="hint-area">${revealStr}</div>
+        <div class="th-typed-row" id="typed-row-area">${buildTypedRowHTML(currentTyped)}</div>
       </div>
       <div class="th-keyboard" id="keyboard-area">
         ${buildKeyboardHTML(word, currentTyped)}
@@ -681,7 +726,7 @@ function renderTypingHint() {
       <div class="th-input-area">
         <input id="type-input" type="text"
           autocomplete="off" autocorrect="off" spellcheck="false"
-          placeholder="ここに入力" ${ts.revealing ? 'disabled' : ''}
+          ${ts.revealing ? 'disabled' : ''}
           oninput="checkTypingHint()" onkeydown="handleTypingHintKey(event)">
         <button class="th-skip" onclick="skipTypingHint()">スキップ</button>
         <button class="th-quit" onclick="showHome()">✕</button>
@@ -700,19 +745,20 @@ window.checkTypingHint = () => {
   const val    = inp.value.trim().toLowerCase();
   const target = word.en.toLowerCase();
 
-  // キーボードをリアルタイム更新
-  const kbArea = document.getElementById('keyboard-area');
-  if (kbArea) kbArea.innerHTML = buildKeyboardHTML(word, inp.value.trim());
+  // リアルタイムUI更新
+  const kbArea        = document.getElementById('keyboard-area');
+  const wordColorArea = document.getElementById('word-color-area');
+  const typedRowArea  = document.getElementById('typed-row-area');
+  if (kbArea)        kbArea.innerHTML        = buildKeyboardHTML(word, inp.value.trim());
+  if (wordColorArea) wordColorArea.innerHTML  = buildWordColorHTML(word, inp.value.trim());
+  if (typedRowArea)  typedRowArea.innerHTML   = buildTypedRowHTML(inp.value.trim());
 
-  // 間違い文字でred
-  if (val.length > 0 && !target.startsWith(val)) {
-    inp.className = 'wrong';
-  } else {
-    inp.className = '';
-  }
+  // タイプ音
+  const isWrong = val.length > 0 && !target.startsWith(val);
+  playTypeSound(false);
 
   if (val === target) {
-    inp.className = 'correct';
+    playTypeSound(true);
     ts.correct++;
     inp.disabled = true;
     setTimeout(async () => {
