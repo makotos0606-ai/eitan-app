@@ -571,11 +571,12 @@ function buildKeyboardHTML(word, typed) {
   `).join('');
 }
 
-// ===== 単語の色分け表示（打済=グレー / 次=オレンジ / 残り=黒） =====
+// ===== 単語の色分け表示（正しく打済=グレー / 誤り=赤 / 次=オレンジ / 残り=黒） =====
 function buildWordColorHTML(word, typed) {
   return word.en.split('').map((ch, i) => {
     if (i < typed.length) {
-      return `<span style="color:#94a3b8">${ch}</span>`;
+      const ok = typed[i].toLowerCase() === ch.toLowerCase();
+      return `<span style="color:${ok ? '#94a3b8' : '#ef4444'}">${ch}</span>`;
     } else if (i === typed.length) {
       return `<span style="color:#f97316;font-weight:900;text-decoration:underline">${ch}</span>`;
     } else {
@@ -584,47 +585,59 @@ function buildWordColorHTML(word, typed) {
   }).join(' ');
 }
 
-// ===== タイプした文字を1つずつ表示 =====
-function buildTypedRowHTML(typed) {
+// ===== タイプした文字を表示（誤りは赤で表示） =====
+function buildTypedRowHTML(word, typed) {
   if (!typed) return '<span style="color:#94a3b8;font-style:italic">ここに入力してね</span>';
-  return `<span style="color:#1e293b">${typed.split('').join(' ')}</span><span class="th-cursor">|</span>`;
+  const spans = typed.split('').map((ch, i) => {
+    const ok = word && i < word.en.length && ch.toLowerCase() === word.en[i].toLowerCase();
+    return `<span style="color:${ok ? '#1e293b' : '#ef4444'};font-weight:700">${ch}</span>`;
+  }).join(' ');
+  return `${spans}<span class="th-cursor">|</span>`;
 }
 
-// ===== タイプ音（Web Audio API） =====
+// ===== 効果音（Web Audio API）全アクティビティ共通 =====
 let _audioCtx = null;
-function playTypeSound(isCorrect = false) {
+function _beep(freqFrom, freqTo, dur, type = 'sine', vol = 0.18, delay = 0) {
   try {
     if (!_audioCtx) _audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    const ctx = _audioCtx;
+    const ctx  = _audioCtx;
     const osc  = ctx.createOscillator();
     const gain = ctx.createGain();
-    osc.connect(gain);
-    gain.connect(ctx.destination);
-    if (isCorrect) {
-      osc.frequency.setValueAtTime(880, ctx.currentTime);
-      osc.frequency.exponentialRampToValueAtTime(1320, ctx.currentTime + 0.12);
-      gain.gain.setValueAtTime(0.25, ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.18);
-      osc.start(ctx.currentTime);
-      osc.stop(ctx.currentTime + 0.18);
-    } else {
-      osc.frequency.setValueAtTime(600, ctx.currentTime);
-      osc.frequency.exponentialRampToValueAtTime(300, ctx.currentTime + 0.06);
-      gain.gain.setValueAtTime(0.15, ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.08);
-      osc.start(ctx.currentTime);
-      osc.stop(ctx.currentTime + 0.08);
-    }
+    osc.connect(gain); gain.connect(ctx.destination);
+    const t = ctx.currentTime + delay;
+    osc.type = type;
+    osc.frequency.setValueAtTime(freqFrom, t);
+    if (freqTo !== freqFrom) osc.frequency.exponentialRampToValueAtTime(freqTo, t + dur);
+    gain.gain.setValueAtTime(vol, t);
+    gain.gain.exponentialRampToValueAtTime(0.001, t + dur);
+    osc.start(t); osc.stop(t + dur);
   } catch(e) {}
 }
+
+// kind: type/correct/wrong/select/match/pop/hit/miss/win
+function playSfx(kind = 'type') {
+  switch (kind) {
+    case 'correct': _beep(880, 1320, 0.18, 'sine', 0.25); break;
+    case 'wrong':   _beep(220, 140, 0.15, 'square', 0.16); break;
+    case 'select':  _beep(520, 620, 0.06, 'triangle', 0.12); break;
+    case 'match':   _beep(660, 990, 0.10, 'sine', 0.22); _beep(990, 1320, 0.12, 'sine', 0.20, 0.10); break;
+    case 'pop':     _beep(180, 90, 0.22, 'sawtooth', 0.28); break;
+    case 'hit':     _beep(1000, 500, 0.09, 'square', 0.18); _beep(500, 1200, 0.10, 'sine', 0.16, 0.05); break;
+    case 'miss':    _beep(200, 120, 0.18, 'sawtooth', 0.18); break;
+    case 'win':     _beep(660, 660, 0.12, 'sine', 0.22); _beep(880, 880, 0.12, 'sine', 0.22, 0.12); _beep(1320, 1320, 0.2, 'sine', 0.22, 0.24); break;
+    default:        _beep(700, 400, 0.07, 'triangle', 0.12); break;
+  }
+}
+
+// 旧名の互換（タイピングから呼ばれる）
+function playTypeSound(kind = 'type') { playSfx(kind); }
 
 function startTypingHint(words) {
   state.screen = 'typing-hint';
   const list = shuffle(words);
   state.typingHintState = {
     list, index: 0, correct: 0, wrong: 0,
-    revealStep: 0,
-    revealing: false
+    revealing: false, lastLen: 0
   };
   renderTypingHint();
 }
@@ -633,10 +646,7 @@ function renderTypingHint() {
   const ts = state.typingHintState;
   if (ts.index >= ts.list.length) { showTypingHintResult(); return; }
   const word = ts.list[ts.index];
-
-  const revealStr = ts.revealStep > 0
-    ? word.en.slice(0, ts.revealStep) + '_'.repeat(Math.max(0, word.en.length - ts.revealStep))
-    : word.en[0] + '_'.repeat(word.en.length - 1);
+  ts.lastLen = 0;
 
   const currentTyped = ts.revealing ? '' : (document.getElementById('type-input')?.value || '');
 
@@ -693,13 +703,8 @@ function renderTypingHint() {
         transform: translateY(-2px);
       }
       .th-key.typed { background: rgba(255,255,255,.35); color: rgba(255,255,255,.6); }
-      .th-input-area {
-        display: flex; align-items: center; justify-content: center;
-        gap: 8px; padding: 6px 14px 10px;
-      }
-      #type-input {
-        width: 1px; height: 1px; opacity: 0; position: absolute;
-      }
+      .th-input-area { position: absolute; top: -100px; }
+      #type-input { position: absolute; opacity: 0; width: 1px; height: 1px; }
       .th-skip {
         background: rgba(255,255,255,.25); border: 2px solid rgba(255,255,255,.5);
         color: white; border-radius: 10px; padding: 7px 12px;
@@ -713,23 +718,25 @@ function renderTypingHint() {
     <div class="th-wrap" onclick="document.getElementById('type-input')?.focus()">
       <div class="th-header">
         <div class="th-counter">${ts.index + 1}/${ts.list.length}</div>
+        <div style="display:flex;gap:8px;align-items:center">
+          <button class="th-skip" onclick="skipTypingHint()">スキップ</button>
+          <button class="th-quit" onclick="showHome()">✕</button>
+        </div>
         <div class="th-counter">${ts.correct}</div>
       </div>
       <div class="th-card">
         <div class="th-word-color" id="word-color-area">${buildWordColorHTML(word, currentTyped)}</div>
         <div class="th-word-ja">${word.ja}</div>
-        <div class="th-typed-row" id="typed-row-area">${buildTypedRowHTML(currentTyped)}</div>
-      </div>
-      <div class="th-keyboard" id="keyboard-area">
-        ${buildKeyboardHTML(word, currentTyped)}
+        <div class="th-typed-row" id="typed-row-area">${buildTypedRowHTML(word, currentTyped)}</div>
       </div>
       <div class="th-input-area">
         <input id="type-input" type="text"
           autocomplete="off" autocorrect="off" spellcheck="false"
           ${ts.revealing ? 'disabled' : ''}
           oninput="checkTypingHint()" onkeydown="handleTypingHintKey(event)">
-        <button class="th-skip" onclick="skipTypingHint()">スキップ</button>
-        <button class="th-quit" onclick="showHome()">✕</button>
+      </div>
+      <div class="th-keyboard" id="keyboard-area">
+        ${buildKeyboardHTML(word, currentTyped)}
       </div>
     </div>
   `);
@@ -742,33 +749,43 @@ window.checkTypingHint = () => {
   const word = ts.list[ts.index];
   const inp  = document.getElementById('type-input');
   if (!inp) return;
-  const val    = inp.value.trim().toLowerCase();
+  const raw    = inp.value.trim();
+  const val    = raw.toLowerCase();
   const target = word.en.toLowerCase();
+
+  // バックスペース（削除）判定
+  const isDelete = raw.length < (ts.lastLen || 0);
+  ts.lastLen = raw.length;
 
   // リアルタイムUI更新
   const kbArea        = document.getElementById('keyboard-area');
   const wordColorArea = document.getElementById('word-color-area');
   const typedRowArea  = document.getElementById('typed-row-area');
-  if (kbArea)        kbArea.innerHTML        = buildKeyboardHTML(word, inp.value.trim());
-  if (wordColorArea) wordColorArea.innerHTML  = buildWordColorHTML(word, inp.value.trim());
-  if (typedRowArea)  typedRowArea.innerHTML   = buildTypedRowHTML(inp.value.trim());
+  if (kbArea)        kbArea.innerHTML        = buildKeyboardHTML(word, raw);
+  if (wordColorArea) wordColorArea.innerHTML = buildWordColorHTML(word, raw);
+  if (typedRowArea)  typedRowArea.innerHTML  = buildTypedRowHTML(word, raw);
 
-  // タイプ音
-  const isWrong = val.length > 0 && !target.startsWith(val);
-  playTypeSound(false);
-
+  // 正解
   if (val === target) {
-    playTypeSound(true);
+    playTypeSound('correct');
     ts.correct++;
     inp.disabled = true;
     setTimeout(async () => {
       await addPoints(state.student.id, CONFIG.points.typingCorrect);
       ts.index++;
-      ts.revealStep = 0;
-      ts.revealing  = false;
+      ts.revealing = false;
       renderTypingHint();
     }, 600);
+    return;
   }
+
+  // バックスペースは無音
+  if (isDelete) return;
+
+  // 直前に打った文字が正しいかで音を変える
+  const lastIdx = raw.length - 1;
+  const wrong = lastIdx >= 0 && raw[lastIdx].toLowerCase() !== (target[lastIdx] || '').toLowerCase();
+  playTypeSound(wrong ? 'wrong' : 'type');
 };
 
 window.handleTypingHintKey = (e) => {
@@ -777,41 +794,33 @@ window.handleTypingHintKey = (e) => {
   if (ts.revealing) return;
   const word = ts.list[ts.index];
   const val  = document.getElementById('type-input')?.value.trim().toLowerCase();
-  if (val === word.en.toLowerCase()) return;
+  if (val === word.en.toLowerCase()) return; // 正解は checkTypingHint 側で処理
 
+  // 不正解 → 正解を表示してから次へ
   ts.wrong++;
-  ts.revealing  = true;
-  ts.revealStep = 1;
-  renderTypingHint();
-  revealNextLetter();
-};
+  ts.revealing = true;
+  playTypeSound('wrong');
 
-function revealNextLetter() {
-  const ts = state.typingHintState;
-  const word = ts.list[ts.index];
-  if (ts.revealStep > word.en.length) {
-    const hintEl = document.getElementById('hint-area');
-    if (hintEl) hintEl.textContent = word.en;
-    setTimeout(() => {
-      ts.index++;
-      ts.revealStep = 0;
-      ts.revealing  = false;
-      renderTypingHint();
-    }, 1500);
-    return;
+  const wordColorArea = document.getElementById('word-color-area');
+  const typedRowArea  = document.getElementById('typed-row-area');
+  if (wordColorArea) {
+    wordColorArea.innerHTML = word.en.split('')
+      .map(ch => `<span style="color:#1e293b">${ch}</span>`).join(' ');
   }
-  const hintEl = document.getElementById('hint-area');
-  if (hintEl) {
-    hintEl.textContent = word.en.slice(0, ts.revealStep) + '_'.repeat(Math.max(0, word.en.length - ts.revealStep));
+  if (typedRowArea) {
+    typedRowArea.innerHTML = `<span style="color:#ef4444;font-weight:800">正解: ${word.en}</span>`;
   }
-  ts.revealStep++;
-  setTimeout(revealNextLetter, 350);
-}
+
+  setTimeout(() => {
+    ts.index++;
+    ts.revealing = false;
+    renderTypingHint();
+  }, 1600);
+};
 
 window.skipTypingHint = () => {
   state.typingHintState.index++;
-  state.typingHintState.revealStep = 0;
-  state.typingHintState.revealing  = false;
+  state.typingHintState.revealing = false;
   renderTypingHint();
 };
 
@@ -846,13 +855,15 @@ function startQuiz(words) {
 
 function renderQuiz() {
   const qs = state.quizState;
-  if (qs.index >= qs.list.length) { showQuizResult(); return; }
+  if (qs.index >= qs.list.length) { clearQuizKeys(); showQuizResult(); return; }
+  qs.answered = false;
   const word = qs.list[qs.index];
 
-  // 不正解の選択肢を3つ作る
-  const others = shuffle(qs.list.filter(w => w.id !== word.id)).slice(0, 3).map(w => w.ja);
+  // 不正解の選択肢を3つ作る（意味が重複しないように）
+  const others = shuffle(qs.list.filter(w => w.ja !== word.ja)).slice(0, 3).map(w => w.ja);
   const choices = shuffle([word.ja, ...others]);
   const pct = Math.round((qs.index / qs.list.length) * 100);
+  const attr = s => String(s).replace(/"/g, '&quot;');
 
   render(`
     ${header()}
@@ -869,43 +880,70 @@ function renderQuiz() {
         <div class="q-word">${word.en}</div>
       </div>
       <div class="quiz-choices">
-        ${choices.map(c => `<button class="choice-btn" onclick="answerQuiz(this,'${c.replace(/'/g,"\\'")}','${word.ja.replace(/'/g,"\\'")}','${word.id}')">${c}</button>`).join('')}
+        ${choices.map((c, i) => `<button class="choice-btn" data-idx="${i}" data-ja="${attr(c)}" onclick="answerQuiz(this)">
+          <span style="display:inline-block;min-width:22px;height:22px;line-height:22px;border-radius:6px;background:#ede9fe;color:#7c3aed;font-size:.8rem;margin-right:8px">${i + 1}</span>${c}</button>`).join('')}
       </div>
       <div id="quiz-feedback" style="text-align:center;font-weight:700;min-height:28px;margin-bottom:12px;font-size:1.05rem"></div>
-      <div id="next-btn-wrap" style="text-align:center"></div>
+      <p style="text-align:center;color:var(--muted);font-size:.8rem">キーボードの 1〜4 でも答えられるよ</p>
     </div>
   `);
+  setupQuizKeys();
 }
 
-window.answerQuiz = async (btn, chosen, correct, wordId) => {
+function setupQuizKeys() {
+  clearQuizKeys();
+  window._quizKeys = (e) => {
+    const n = parseInt(e.key, 10);
+    if (n >= 1 && n <= 4) {
+      const b = document.querySelector(`.choice-btn[data-idx="${n - 1}"]`);
+      if (b && !b.disabled) b.click();
+    }
+  };
+  document.addEventListener('keydown', window._quizKeys);
+}
+function clearQuizKeys() {
+  if (window._quizKeys) { document.removeEventListener('keydown', window._quizKeys); window._quizKeys = null; }
+}
+
+window.answerQuiz = async (btn) => {
   const qs = state.quizState;
+  if (qs.answered) return;
+  qs.answered = true;
+  const word   = qs.list[qs.index];
+  const chosen = btn.dataset.ja;
   document.querySelectorAll('.choice-btn').forEach(b => b.disabled = true);
   const fb = document.getElementById('quiz-feedback');
-  if (chosen === correct) {
+  const isCorrect = chosen === word.ja;
+
+  if (isCorrect) {
     btn.classList.add('selected-correct');
     fb.textContent = '✨ 正解！';
     fb.style.color = 'var(--success)';
     qs.correct++;
+    playSfx('correct');
     await addPoints(state.student.id, CONFIG.points.quizCorrect);
   } else {
     btn.classList.add('selected-wrong');
-    fb.textContent = `❌ 正解は「${correct}」`;
+    fb.textContent = `❌ 正解は「${word.ja}」`;
     fb.style.color = 'var(--danger)';
+    playSfx('wrong');
     document.querySelectorAll('.choice-btn').forEach(b => {
-      if (b.textContent === correct) b.classList.add('show-correct');
+      if (b.dataset.ja === word.ja) b.classList.add('show-correct');
     });
   }
-  document.getElementById('next-btn-wrap').innerHTML =
-    `<button class="btn-primary" onclick="nextQuiz()">次へ →</button>`;
+  setTimeout(() => nextQuiz(), isCorrect ? 900 : 1700);
 };
 
 window.nextQuiz = () => {
+  clearQuizKeys();
   state.quizState.index++;
   renderQuiz();
 };
 
 async function showQuizResult() {
   const qs = state.quizState;
+  clearQuizKeys();
+  playSfx('win');
   const perfect = qs.correct === qs.list.length;
   const bonus = perfect ? CONFIG.points.quizPerfect : 0;
   if (bonus > 0) await addPoints(state.student.id, bonus);
@@ -1200,6 +1238,7 @@ function hitShooterTarget(targetObj, cx, cy) {
     ss.hits++;
     ss.answered++;
     ss.score += 100;
+    playSfx('hit');
     showShooterFX(cx, cy, true, '✓ ' + currentWord.en);
     updateShooterHUD();
 
@@ -1218,6 +1257,7 @@ function hitShooterTarget(targetObj, cx, cy) {
     ss.misses++;
     ss.noMiss = false;
     ss.lives--;
+    playSfx('miss');
     showShooterFX(cx, cy, false, 'MISS!');
     updateShooterHUD();
     const wrap = document.getElementById('sh-wrap');
@@ -1350,6 +1390,8 @@ function startMemory(words) {
     matched: new Set(),
     selected: null,
     misses: 0,
+    locked: false,
+    wrongPair: null,
     startTime: Date.now(),
     timerInterval: null,
     lesson: selectedLessons.join('+'),
@@ -1381,7 +1423,9 @@ function renderMemory() {
   const cardStyle = (card) => {
     const isMatched  = ms.matched.has(card.pairId);
     const isSelected = ms.selected === card.id;
+    const isWrong    = ms.wrongPair && ms.wrongPair.includes(card.id);
     if (isMatched)  return `background:#f0fdf4;border-color:#86efac;color:#15803d;opacity:.45;cursor:default;pointer-events:none;`;
+    if (isWrong)    return `background:#fef2f2;border-color:#f87171;color:#b91c1c;transform:scale(1.02);box-shadow:0 4px 16px rgba(248,113,113,.4);`;
     if (isSelected) return `background:#dbeafe;border-color:#3b82f6;color:#1d4ed8;transform:scale(1.04);box-shadow:0 4px 18px rgba(59,130,246,.35);`;
     return `background:white;border-color:#e2e8f0;color:var(--text);cursor:pointer;`;
   };
@@ -1429,6 +1473,7 @@ window.quitMemory = () => {
 
 window.selectMemCard = (cardId) => {
   const ms = state.memoryState;
+  if (ms.locked) return; // ミス表示中は操作不可
   const allCards = ms.allCards;
   const card = allCards.find(c => c.id === cardId);
   if (!card || ms.matched.has(card.pairId)) return;
@@ -1436,6 +1481,7 @@ window.selectMemCard = (cardId) => {
   if (!ms.selected) {
     // 1枚目を選択
     ms.selected = cardId;
+    playSfx('select');
     renderMemory();
     return;
   }
@@ -1448,9 +1494,10 @@ window.selectMemCard = (cardId) => {
   }
 
   const first = allCards.find(c => c.id === ms.selected);
-  // 同じ種類（英語同士・日本語同士）はNG
+  // 同じ種類（英語同士・日本語同士）は選び直し
   if (first.type === card.type) {
     ms.selected = cardId;
+    playSfx('select');
     renderMemory();
     return;
   }
@@ -1459,18 +1506,27 @@ window.selectMemCard = (cardId) => {
     // マッチ！
     ms.matched.add(card.pairId);
     ms.selected = null;
+    playSfx('match');
     renderMemory();
     if (ms.matched.size === ms.enCards.length) {
       // 全ペア完成
       clearInterval(ms.timerInterval);
       const timeMs = Date.now() - ms.startTime;
-      showMemoryResult(timeMs);
+      setTimeout(() => showMemoryResult(timeMs), 450);
     }
   } else {
-    // ミス
+    // ミス → 両方を赤く見せてから戻す
     ms.misses++;
+    ms.wrongPair = [ms.selected, cardId];
     ms.selected = null;
+    ms.locked = true;
+    playSfx('wrong');
     renderMemory();
+    setTimeout(() => {
+      ms.wrongPair = null;
+      ms.locked = false;
+      renderMemory();
+    }, 650);
   }
 };
 
@@ -1480,6 +1536,7 @@ async function showMemoryResult(timeMs) {
   const timeStr = formatMemTime(timeMs);
   const timeSec = timeMs / 1000;
   const s       = state.student;
+  playSfx('win');
 
   // まず結果画面を即表示（ローディング中）
   render(`
@@ -1748,6 +1805,7 @@ window.drawCard = () => {
   if (ps.deck.length === 0) { showPOPResult(); return; }
   ps.drawnCard = ps.deck.pop();
   ps.phase = 'reveal';
+  playSfx(ps.drawnCard.type === 'pop' ? 'pop' : 'select');
   renderPOP();
 };
 
@@ -1786,6 +1844,7 @@ function showPOPResult() {
   const ps = state.popState;
   const ranked = [...ps.players].sort((a, b) => b.cards.length - a.cards.length);
   const winner = ranked[0];
+  playSfx('win');
 
   render(`
     ${header()}
