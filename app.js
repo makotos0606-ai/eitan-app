@@ -107,7 +107,7 @@ async function addPoints(studentId, pts) {
   return newPoints;
 }
 
-async function getWords(grade, cls, lesson) {
+async function getWordsRaw(grade, cls, lesson) {
   const q = F.query(
     F.collection(db, 'words'),
     F.where('grade', '==', grade),
@@ -116,6 +116,22 @@ async function getWords(grade, cls, lesson) {
   );
   const snap = await F.getDocs(q);
   return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+}
+
+// 語彙アクティビティ用（文型パズルのデータは除外）
+async function getWords(grade, cls, lesson) {
+  return (await getWordsRaw(grade, cls, lesson)).filter(w => w.kind !== 'pattern');
+}
+
+// 指定レッスンの文型パズル文を取得
+async function getPatternsByLesson(grade, cls, lesson) {
+  return (await getWordsRaw(grade, cls, lesson)).filter(w => w.kind === 'pattern');
+}
+
+// 学年・クラスの全文型パズル文を取得（生徒用）
+async function getPatternsFor(grade, cls) {
+  const all = await getAllWords();
+  return all.filter(w => w.kind === 'pattern' && w.grade === grade && w.class === cls);
 }
 
 async function getAllStudents() {
@@ -1920,17 +1936,159 @@ const PAT_COLOR  = { S:'#ef4444', V:'#22c55e', O:'#3b82f6', C:'#a855f7', AUX:'#e
 const PAT_BORDER = { S:'#b91c1c', V:'#15803d', O:'#1d4ed8', C:'#7e22ce', AUX:'#a16207' };
 const PAT_LABEL  = { S:'主語', V:'動詞', O:'目的語', C:'補語', AUX:'助動詞/否定' };
 
+// ===== 第1〜第5文型の英文プール（毎回ここからランダム出題） =====
+const S = t => ({ text: t, role: 'S' });
+const V = t => ({ text: t, role: 'V' });
+const O = t => ({ text: t, role: 'O' });
+const C = t => ({ text: t, role: 'C' });
+
+const PATTERN_BANK = {
+  // 第1文型 S + V（〜が…する）
+  '1': [
+    { hint: '鳥は飛ぶ。',           cards: [S('Birds'), V('fly.')] },
+    { hint: '赤ちゃんが泣いた。',    cards: [S('The baby'), V('cried.')] },
+    { hint: '太陽は昇る。',         cards: [S('The sun'), V('rises.')] },
+    { hint: '犬は走る。',           cards: [S('Dogs'), V('run.')] },
+    { hint: '彼女はほほ笑んだ。',    cards: [S('She'), V('smiled.')] },
+    { hint: 'その犬は眠っている。',  cards: [S('The dog'), V('sleeps.')] },
+    { hint: '私たちは歩いた。',      cards: [S('We'), V('walked.')] },
+    { hint: '彼らは泳いだ。',        cards: [S('They'), V('swam.')] },
+    { hint: '電車が止まった。',      cards: [S('The train'), V('stopped.')] },
+    { hint: '父は働いている。',      cards: [S('My father'), V('works.')] },
+    { hint: '星が輝く。',           cards: [S('The stars'), V('shine.')] },
+    { hint: 'みんなが笑った。',      cards: [S('Everyone'), V('laughed.')] },
+  ],
+  // 第2文型 S + V + C（〜は…だ／になる）
+  '2': [
+    { hint: '彼女は先生だ。',        cards: [S('She'), V('is'), C('a teacher.')] },
+    { hint: '彼は幸せそうに見える。', cards: [S('He'), V('looks'), C('happy.')] },
+    { hint: 'このリンゴは甘い。',    cards: [S('This apple'), V('is'), C('sweet.')] },
+    { hint: '彼らは生徒だ。',        cards: [S('They'), V('are'), C('students.')] },
+    { hint: 'スープが冷めた。',      cards: [S('The soup'), V('got'), C('cold.')] },
+    { hint: '父は医者だ。',          cards: [S('My father'), V('is'), C('a doctor.')] },
+    { hint: '彼女は有名になった。',   cards: [S('She'), V('became'), C('famous.')] },
+    { hint: 'あなたは疲れて見える。', cards: [S('You'), V('look'), C('tired.')] },
+    { hint: 'その話は面白そうだ。',   cards: [S('The story'), V('sounds'), C('interesting.')] },
+    { hint: '今日は寒い。',          cards: [S('It'), V('is'), C('cold.')] },
+  ],
+  // 第3文型 S + V + O（〜は…を〜する）
+  '3': [
+    { hint: '私はテニスをする。',     cards: [S('I'), V('play'), O('tennis.')] },
+    { hint: '彼女は本を読む。',       cards: [S('She'), V('reads'), O('books.')] },
+    { hint: '私たちは英語を勉強する。', cards: [S('We'), V('study'), O('English.')] },
+    { hint: '彼は音楽が好きだ。',     cards: [S('He'), V('likes'), O('music.')] },
+    { hint: '彼らは映画を見た。',     cards: [S('They'), V('watched'), O('a movie.')] },
+    { hint: '私は昼食を食べた。',     cards: [S('I'), V('ate'), O('lunch.')] },
+    { hint: 'トムはサッカーをする。', cards: [S('Tom'), V('plays'), O('soccer.')] },
+    { hint: '彼女は猫を飼っている。',  cards: [S('She'), V('has'), O('a cat.')] },
+    { hint: '私たちは京都を訪れた。',  cards: [S('We'), V('visited'), O('Kyoto.')] },
+    { hint: '彼はドアを開けた。',     cards: [S('He'), V('opened'), O('the door.')] },
+  ],
+  // 第4文型 S + V + O + O（〜は(人)に(物)を…する）
+  '4': [
+    { hint: '彼は私にプレゼントをくれた。', cards: [S('He'), V('gave'), O('me'), O('a present.')] },
+    { hint: '彼女は彼に手紙を送った。',    cards: [S('She'), V('sent'), O('him'), O('a letter.')] },
+    { hint: '私は彼女にアルバムを見せた。', cards: [S('I'), V('showed'), O('her'), O('my album.')] },
+    { hint: '母は私に昼食を作ってくれた。', cards: [S('My mother'), V('made'), O('me'), O('lunch.')] },
+    { hint: '彼は私たちに話をしてくれた。', cards: [S('He'), V('told'), O('us'), O('a story.')] },
+    { hint: '先生は私たちに英語を教えた。', cards: [S('The teacher'), V('taught'), O('us'), O('English.')] },
+    { hint: '彼女は彼に時計を買った。',    cards: [S('She'), V('bought'), O('him'), O('a watch.')] },
+    { hint: '私は犬に食べ物をあげた。',    cards: [S('I'), V('gave'), O('the dog'), O('some food.')] },
+    { hint: '彼は私にメールを送った。',    cards: [S('He'), V('sent'), O('me'), O('an email.')] },
+    { hint: '彼らは私たちに道を教えた。',  cards: [S('They'), V('showed'), O('us'), O('the way.')] },
+  ],
+  // 第5文型 S + V + O + C（〜は(人・物)を…にする／と呼ぶ）
+  '5': [
+    { hint: '私たちは彼をトムと呼ぶ。',     cards: [S('We'), V('call'), O('him'), C('Tom.')] },
+    { hint: 'その知らせは彼女を幸せにした。', cards: [S('The news'), V('made'), O('her'), C('happy.')] },
+    { hint: '彼らは赤ちゃんをエマと名付けた。', cards: [S('They'), V('named'), O('the baby'), C('Emma.')] },
+    { hint: '彼女は部屋をきれいに保つ。',    cards: [S('She'), V('keeps'), O('the room'), C('clean.')] },
+    { hint: '私はその本が簡単だと分かった。', cards: [S('I'), V('found'), O('the book'), C('easy.')] },
+    { hint: '私たちは壁を白く塗った。',      cards: [S('We'), V('painted'), O('the wall'), C('white.')] },
+    { hint: 'その映画は私を悲しくさせた。',  cards: [S('The movie'), V('made'), O('me'), C('sad.')] },
+    { hint: '私たちはその犬をポチと呼ぶ。',  cards: [S('We'), V('call'), O('the dog'), C('Pochi.')] },
+    { hint: '彼の言葉は私たちを怒らせた。',  cards: [S('His words'), V('made'), O('us'), C('angry.')] },
+    { hint: '彼女はドアを開けたままにした。', cards: [S('She'), V('left'), O('the door'), C('open.')] },
+  ],
+};
+
+const PATTERN_MODE_LABEL = {
+  '1': '第1文型（S+V）',
+  '2': '第2文型（S+V+C）',
+  '3': '第3文型（S+V+O）',
+  '4': '第4文型（S+V+O+O）',
+  '5': '第5文型（S+V+O+C）',
+  'mix': 'ごちゃまぜ',
+  'textbook': '教科書本文',
+};
+
+function buildPatternItem(raw) {
+  const order = raw.cards.map(c => c.role);
+  return { hint: raw.hint, cards: raw.cards, order, pattern: order.join(' + ') };
+}
+
+// --- 選択メニュー ---
 function startPattern() {
   state.screen = 'pattern';
-  state.patternState = { index: 0, correct: 0, solved: false };
-  renderPattern();
+  const btn = (mode, sub, color) => `
+    <button class="menu-card" style="text-align:center;cursor:pointer;border:none;width:100%"
+      onclick="patternMode('${mode}')">
+      <div class="icon" style="font-size:1.6rem">${color}</div>
+      <h3 style="margin:4px 0">${PATTERN_MODE_LABEL[mode]}</h3>
+      <p>${sub}</p>
+    </button>`;
+  render(`
+    ${header()}
+    <div class="container" style="max-width:720px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+        <h2 style="color:var(--primary)">🧩 文型パズル</h2>
+        <button class="btn-secondary btn-sm" onclick="showHome()">← 戻る</button>
+      </div>
+      <p style="color:var(--muted);margin-bottom:16px">学びたい「型」を選んでね。第1〜第5・ごちゃまぜは毎回ランダムに出題されます。</p>
+      <div class="menu-grid">
+        ${btn('1', '主語＋動詞', '①')}
+        ${btn('2', '主語＋動詞＋補語', '②')}
+        ${btn('3', '主語＋動詞＋目的語', '③')}
+        ${btn('4', '主語＋動詞＋目的語＋目的語', '④')}
+        ${btn('5', '主語＋動詞＋目的語＋補語', '⑤')}
+        ${btn('mix', '第1〜第5をまぜて出題', '🎲')}
+        ${btn('textbook', '先生が登録した文で練習', '📖')}
+      </div>
+    </div>
+  `);
 }
+
+window.patternMode = async (mode) => {
+  let list = [];
+
+  if (mode === 'textbook') {
+    render(`${header()}<div class="container"><p style="color:var(--muted)">読み込み中…</p></div>`);
+    try {
+      const pats = await getPatternsFor(state.student.grade, state.student.class);
+      list = pats.map(p => ({ hint: p.ja, cards: p.chunks, order: p.chunks.map(c => c.role), pattern: p.pattern }));
+    } catch(e) {}
+    if (list.length === 0) {
+      toast('教科書本文がまだ登録されていません。先生に登録してもらおう！', 3500);
+      startPattern();
+      return;
+    }
+  } else if (mode === 'mix') {
+    const all = [].concat(...Object.keys(PATTERN_BANK).map(k => PATTERN_BANK[k]));
+    list = shuffle(all).slice(0, 12).map(buildPatternItem);
+  } else {
+    const pool = PATTERN_BANK[mode] || [];
+    list = shuffle([...pool]).slice(0, 10).map(buildPatternItem);
+  }
+
+  state.patternState = { list: shuffle(list), index: 0, correct: 0, solved: false, mode };
+  renderPattern();
+};
 
 function renderPattern() {
   const st = state.patternState;
-  if (st.index >= PATTERN_QUESTIONS.length) { showPatternResult(); return; }
+  if (st.index >= st.list.length) { showPatternResult(); return; }
   st.solved = false;
-  const q = PATTERN_QUESTIONS[st.index];
+  const q = st.list[st.index];
   const shuffled = shuffle([...q.cards]);
 
   const cardHTML = (c) => {
@@ -1959,7 +2117,7 @@ function renderPattern() {
     ${header()}
     <div class="container" style="max-width:820px">
       <div class="typing-progress">
-        <span>${st.index + 1} / ${PATTERN_QUESTIONS.length}</span>
+        <span>${st.index + 1} / ${st.list.length}</span>
         <span>✅ ${st.correct}</span>
       </div>
       <div class="pat-mission">
@@ -1997,7 +2155,7 @@ window.patternMove = (card) => {
 
 function patternCheck() {
   const st = state.patternState;
-  const q  = PATTERN_QUESTIONS[st.index];
+  const q  = st.list[st.index];
   const zone   = document.getElementById('pat-zone');
   const result = document.getElementById('pat-result');
   const nextBtn = document.getElementById('pat-next');
@@ -2030,7 +2188,7 @@ window.patternNext = () => {
 
 async function showPatternResult() {
   const st = state.patternState;
-  const perfect = st.correct === PATTERN_QUESTIONS.length;
+  const perfect = st.correct === st.list.length;
   const bonus = perfect ? CONFIG.points.patternPerfect : 0;
   if (bonus > 0) await addPoints(state.student.id, bonus);
   playSfx('win');
@@ -2039,12 +2197,13 @@ async function showPatternResult() {
     <div class="score-popup">
       <h2>全問クリア！</h2>
       <div class="big">🧩</div>
-      <p>${PATTERN_QUESTIONS.length}問中 <strong>${st.correct}問</strong> 正解</p>
+      <p>${st.list.length}問中 <strong>${st.correct}問</strong> 正解</p>
       ${perfect ? `<p style="color:var(--accent);font-weight:700">パーフェクト！ +${bonus}pt 🎉</p>` : ''}
       <div class="pts-earned">+${st.correct * CONFIG.points.patternCorrect + bonus} pt</div>
       <p style="color:var(--muted);font-size:.85rem;margin-bottom:20px">合計 ${state.student.points} pt</p>
       <div style="display:flex;gap:10px">
-        <button class="btn-secondary" onclick="startPattern()">もう一度</button>
+        <button class="btn-secondary" onclick="patternMode('${st.mode}')">もう一度</button>
+        <button class="btn-secondary" onclick="startPattern()">型を選び直す</button>
         <button class="btn-primary" onclick="showHome()">ホームへ</button>
       </div>
     </div>
@@ -2085,6 +2244,8 @@ async function renderTeacher() {
   let content = '';
   if (tab === 'words') {
     content = await renderTeacherWords();
+  } else if (tab === 'pattern') {
+    content = renderTeacherPattern();
   } else if (tab === 'students') {
     content = await renderTeacherStudents();
   } else if (tab === 'settings') {
@@ -2096,12 +2257,14 @@ async function renderTeacher() {
     <div class="container">
       <div class="teacher-tabs">
         <button class="${tab === 'words' ? 'active' : 'inactive'}" onclick="teacherTab('words')">単語管理</button>
+        <button class="${tab === 'pattern' ? 'active' : 'inactive'}" onclick="teacherTab('pattern')">文型パズル</button>
         <button class="${tab === 'students' ? 'active' : 'inactive'}" onclick="teacherTab('students')">生徒一覧</button>
         <button class="${tab === 'settings' ? 'active' : 'inactive'}" onclick="teacherTab('settings')">設定</button>
       </div>
       ${content}
     </div>
   `);
+  if (tab === 'pattern') loadPatternList();
 }
 
 window.teacherTab = (tab) => {
@@ -2330,6 +2493,145 @@ window.removeWord = async (id) => {
   await deleteWord(id);
   toast('削除しました');
   loadWordList();
+};
+
+// ===== 先生：文型パズル管理 =====
+function renderTeacherPattern() {
+  return `
+    <div class="card" style="margin-bottom:20px">
+      <h3 style="margin-bottom:12px;color:#7c3aed">🧩 文型パズルの文を追加</h3>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:12px">
+        <div class="form-group" style="margin:0">
+          <label>学年</label>
+          <select id="pat-grade">${CONFIG.grades.map(g => `<option value="${g}">${g}</option>`).join('')}</select>
+        </div>
+        <div class="form-group" style="margin:0">
+          <label>クラス</label>
+          <select id="pat-class">${CONFIG.classes.map(c => `<option value="${c}">${c}</option>`).join('')}</select>
+        </div>
+        <div class="form-group" style="margin:0">
+          <label>レッスン</label>
+          <select id="pat-lesson">${CONFIG.lessons.map(l => `<option value="${l}">${l}</option>`).join('')}</select>
+        </div>
+      </div>
+
+      <div class="note" style="background:#f5f3ff;border-color:#7c3aed;margin-bottom:12px">
+        <p style="color:#5b21b6;font-size:.85rem;line-height:1.7">
+          📌 <strong>入力のしかた</strong>：1行に1文。<br>
+          <code>日本語の意味 | 単語[役割] 単語[役割] …</code><br>
+          役割は <strong>S</strong>（主語）／<strong>V</strong>（動詞）／<strong>O</strong>（目的語）／<strong>C</strong>（補語）／<strong>AUX</strong>（助動詞・否定・be動詞）<br>
+          複数の単語をまとめて1枚にできます（例：<code>The apple[S]</code>）。
+        </p>
+      </div>
+
+      <p style="color:var(--muted);font-size:.85rem;margin-bottom:6px">記入例：</p>
+      <pre style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:10px;font-size:.82rem;overflow-x:auto;margin-bottom:12px">私は野球をします。 | I[S] play[V] baseball.[O]
+そのリンゴは甘い。 | The apple[S] is[V] sweet.[C]
+私はテニスをしません。 | I[S] do not[AUX] play[V] tennis.[O]</pre>
+
+      <textarea id="pat-input" rows="6" placeholder="私は野球をします。 | I[S] play[V] baseball.[O]"></textarea>
+      <button class="btn-primary" style="margin-top:8px" onclick="addPatternSentences()">➕ まとめて追加</button>
+      <p id="pat-msg" style="margin-top:8px;font-size:.9rem;min-height:18px"></p>
+    </div>
+
+    <div class="card">
+      <h3 style="margin-bottom:16px;color:#7c3aed">📚 登録済みの文（このレッスン）</h3>
+      <p style="color:var(--muted);font-size:.85rem;margin-bottom:10px">上の「学年・クラス・レッスン」を切り替えて「一覧を更新」を押すと、その内容が表示されます</p>
+      <button class="btn-secondary btn-sm" onclick="loadPatternList()" style="margin-bottom:12px">🔄 一覧を更新</button>
+      <div id="pattern-list-container">読み込み中…</div>
+    </div>
+  `;
+}
+
+// 1行をパース： "日本語 | I[S] play[V] baseball.[O]"
+function parsePatternLine(line) {
+  const parts = line.split('|');
+  if (parts.length < 2) return null;
+  const hint = parts[0].trim();
+  const body = parts.slice(1).join('|').trim();
+  if (!hint || !body) return null;
+
+  const chunks = [];
+  const re = /([^\[]+)\[([A-Za-z]+)\]/g;
+  let m;
+  while ((m = re.exec(body)) !== null) {
+    const text = m[1].trim();
+    const role = m[2].toUpperCase();
+    if (!text) return null;
+    if (!['S','V','O','C','AUX'].includes(role)) return null;
+    chunks.push({ text, role });
+  }
+  if (chunks.length < 2) return null;
+  const pattern = chunks.map(c => c.role).join(' + ');
+  return { hint, chunks, pattern };
+}
+
+window.addPatternSentences = async () => {
+  const grade  = document.getElementById('pat-grade').value;
+  const cls    = document.getElementById('pat-class').value;
+  const lesson = document.getElementById('pat-lesson').value;
+  const raw    = document.getElementById('pat-input').value;
+  const msg    = document.getElementById('pat-msg');
+  const lines  = raw.split('\n').map(l => l.trim()).filter(Boolean);
+
+  if (lines.length === 0) { msg.textContent = '文を入力してください'; msg.style.color = 'red'; return; }
+
+  let ok = 0; const errors = [];
+  for (const line of lines) {
+    const parsed = parsePatternLine(line);
+    if (!parsed) { errors.push(line); continue; }
+    await F.addDoc(F.collection(db, 'words'), {
+      kind: 'pattern',
+      grade, class: cls, lesson,
+      ja: parsed.hint,
+      chunks: parsed.chunks,
+      pattern: parsed.pattern,
+      createdAt: Date.now(),
+    });
+    ok++;
+  }
+
+  if (errors.length === 0) {
+    msg.textContent = `${ok}文を追加しました！`;
+    msg.style.color = 'green';
+    document.getElementById('pat-input').value = '';
+  } else {
+    msg.innerHTML = `${ok}文を追加。${errors.length}行は形式エラーでスキップ：<br><span style="color:#b91c1c;font-size:.8rem">${errors.map(e=>e.replace(/</g,'&lt;')).join('<br>')}</span>`;
+    msg.style.color = '#b45309';
+  }
+  loadPatternList();
+};
+
+async function loadPatternList() {
+  const container = document.getElementById('pattern-list-container');
+  if (!container) return;
+  const grade  = document.getElementById('pat-grade')?.value;
+  const cls    = document.getElementById('pat-class')?.value;
+  const lesson = document.getElementById('pat-lesson')?.value;
+  if (!grade) return;
+  container.textContent = '読み込み中…';
+  const pats = await getPatternsByLesson(grade, cls, lesson);
+  if (pats.length === 0) {
+    container.innerHTML = `<p style="color:var(--muted)">まだ登録されていません</p>`;
+    return;
+  }
+  container.innerHTML = pats.map(p => {
+    const sentence = (p.chunks || []).map(c => c.text).join(' ');
+    return `<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 12px;border-bottom:1px solid #f1f5f9">
+      <div style="text-align:left">
+        <div style="font-weight:700">${sentence}</div>
+        <div style="font-size:.8rem;color:var(--muted)">${p.ja} ／ 型：${p.pattern}</div>
+      </div>
+      <button class="btn-danger btn-sm" onclick="deletePattern('${p.id}')">削除</button>
+    </div>`;
+  }).join('');
+}
+
+window.deletePattern = async (id) => {
+  if (!confirm('この文を削除しますか？')) return;
+  await deleteWord(id);
+  toast('削除しました');
+  loadPatternList();
 };
 
 async function renderTeacherStudents() {
