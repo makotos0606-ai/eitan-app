@@ -21,6 +21,8 @@ const CONFIG = {
     memoryComplete: 15, // 神経衰弱：全ペア完成ボーナス
     shooterHit: 3,      // シューター：正解1発
     shooterBonus: 10,   // シューター：ノーミスボーナス
+    patternCorrect: 6,  // 文型パズル：1問正解
+    patternPerfect: 25, // 文型パズル：全問正解ボーナス
   }
 };
 
@@ -304,6 +306,11 @@ function showHome() {
           <div class="icon">🃏</div>
           <h3>POP ゲーム</h3>
           <p>グループで遊べるカードゲーム</p>
+        </div>
+        <div class="menu-card" onclick="startPattern()">
+          <div class="icon">🧩</div>
+          <h3>文型パズル</h3>
+          <p>カードを並べて英文の「型」を作ろう</p>
         </div>
         <div class="menu-card" onclick="showRanking()">
           <div class="icon">🏆</div>
@@ -1890,6 +1897,155 @@ function showPOPResult() {
       <div style="display:flex;gap:10px">
         <button class="btn-secondary" style="flex:1" onclick="showPOPSetup(state.popWords)">もう一度</button>
         <button class="btn-primary" style="flex:1" onclick="showHome()">ホームへ</button>
+      </div>
+    </div>
+  `);
+}
+
+// ===== 文型パズル（語順マスター） =====
+const PATTERN_QUESTIONS = [
+  { pattern: "S + V + O",       hint: "「私は野球をします。」", cards: [{text:"I",role:"S"},{text:"play",role:"V"},{text:"baseball.",role:"O"}], order: ["S","V","O"] },
+  { pattern: "S + V + C",       hint: "「そのリンゴは甘い。」", cards: [{text:"The apple",role:"S"},{text:"is",role:"V"},{text:"sweet.",role:"C"}], order: ["S","V","C"] },
+  { pattern: "S + V + O + O",   hint: "「彼は私にプレゼントをくれた。」", cards: [{text:"He",role:"S"},{text:"gave",role:"V"},{text:"me",role:"O"},{text:"a present.",role:"O"}], order: ["S","V","O","O"] },
+  { pattern: "S + V + O + C",   hint: "「そのニュースは彼女を幸せにした。」", cards: [{text:"The news",role:"S"},{text:"made",role:"V"},{text:"her",role:"O"},{text:"happy.",role:"C"}], order: ["S","V","O","C"] },
+  { pattern: "V + O",           hint: "【命令文】「窓を開けなさい。」", cards: [{text:"Open",role:"V"},{text:"the window.",role:"O"}], order: ["V","O"] },
+  { pattern: "S + AUX + V + O", hint: "【否定文】「私はテニスをしません。」", cards: [{text:"I",role:"S"},{text:"do not",role:"AUX"},{text:"play",role:"V"},{text:"tennis.",role:"O"}], order: ["S","AUX","V","O"] },
+  { pattern: "S + AUX + V + O", hint: "【現在進行形】「彼は今、昼食を食べているところです。」", cards: [{text:"He",role:"S"},{text:"is",role:"AUX"},{text:"eating",role:"V"},{text:"lunch now.",role:"O"}], order: ["S","AUX","V","O"] },
+  { pattern: "S + AUX + V + O", hint: "【現在完了形】「私はちょうど宿題を終えたところです。」", cards: [{text:"I",role:"S"},{text:"have",role:"AUX"},{text:"finished",role:"V"},{text:"my homework.",role:"O"}], order: ["S","AUX","V","O"] },
+  { pattern: "S + AUX + V + O", hint: "【助動詞の文】「あなたは英語を話すことができる。」", cards: [{text:"You",role:"S"},{text:"can",role:"AUX"},{text:"speak",role:"V"},{text:"English.",role:"O"}], order: ["S","AUX","V","O"] },
+  { pattern: "S + V + O + C",   hint: "【最後の挑戦】「私たちは彼をトムと呼びます。」", cards: [{text:"We",role:"S"},{text:"call",role:"V"},{text:"him",role:"O"},{text:"Tom.",role:"C"}], order: ["S","V","O","C"] },
+];
+
+const PAT_COLOR  = { S:'#ef4444', V:'#22c55e', O:'#3b82f6', C:'#a855f7', AUX:'#eab308' };
+const PAT_BORDER = { S:'#b91c1c', V:'#15803d', O:'#1d4ed8', C:'#7e22ce', AUX:'#a16207' };
+const PAT_LABEL  = { S:'主語', V:'動詞', O:'目的語', C:'補語', AUX:'助動詞/否定' };
+
+function startPattern() {
+  state.screen = 'pattern';
+  state.patternState = { index: 0, correct: 0, solved: false };
+  renderPattern();
+}
+
+function renderPattern() {
+  const st = state.patternState;
+  if (st.index >= PATTERN_QUESTIONS.length) { showPatternResult(); return; }
+  st.solved = false;
+  const q = PATTERN_QUESTIONS[st.index];
+  const shuffled = shuffle([...q.cards]);
+
+  const cardHTML = (c) => {
+    const dark = c.role === 'AUX';
+    return `<div class="pat-card" data-role="${c.role}" onclick="patternMove(this)"
+      style="background:${PAT_COLOR[c.role]};color:${dark ? '#1e293b' : 'white'};border-bottom:4px solid ${PAT_BORDER[c.role]}">${c.text}</div>`;
+  };
+  const legend = Object.keys(PAT_LABEL).map(r =>
+    `<span style="display:inline-flex;align-items:center;gap:4px">
+      <span style="width:12px;height:12px;border-radius:3px;background:${PAT_COLOR[r]};display:inline-block"></span>${PAT_LABEL[r]}</span>`).join('');
+
+  render(`
+    <style>
+      .pat-mission { background:#eff6ff; border-left:6px solid var(--primary); border-radius:12px; padding:16px 18px; margin:14px 0 10px; text-align:center; }
+      .pat-badge { display:inline-block; background:var(--primary); color:white; padding:4px 16px; border-radius:8px; font-weight:800; font-size:1rem; margin-bottom:8px; }
+      .pat-hint { font-size:1.35rem; font-weight:800; color:#1e293b; line-height:1.4; }
+      .pat-legend { font-size:.8rem; color:var(--muted); margin-bottom:12px; display:flex; gap:12px; flex-wrap:wrap; justify-content:center; }
+      .pat-section { text-align:left; font-weight:700; color:var(--muted); margin:6px 2px; font-size:.88rem; }
+      .pat-pool, .pat-zone { display:flex; flex-wrap:wrap; gap:12px; justify-content:center; padding:16px; border-radius:12px; min-height:74px; }
+      .pat-pool { background:#fafafa; border:2px dashed #cbd5e1; margin-bottom:14px; }
+      .pat-zone { background:#eef2f7; border:2px solid #cbd5e1; margin-bottom:12px; }
+      .pat-card { padding:12px 20px; font-size:1.25rem; font-weight:800; border-radius:10px; cursor:pointer; user-select:none; box-shadow:0 4px 10px rgba(0,0,0,.15); transition:transform .12s; }
+      .pat-card:hover { transform:translateY(-3px); }
+      .pat-result { font-size:1.35rem; font-weight:800; min-height:40px; text-align:center; margin:6px 0 14px; }
+    </style>
+    ${header()}
+    <div class="container" style="max-width:820px">
+      <div class="typing-progress">
+        <span>${st.index + 1} / ${PATTERN_QUESTIONS.length}</span>
+        <span>✅ ${st.correct}</span>
+      </div>
+      <div class="pat-mission">
+        <div class="pat-badge">目標の型：${q.pattern}</div>
+        <div class="pat-hint">${q.hint}</div>
+      </div>
+      <div class="pat-legend">${legend}</div>
+      <div class="pat-section">▼ 単語（タップで下へ移動）</div>
+      <div id="pat-pool" class="pat-pool">${shuffled.map(cardHTML).join('')}</div>
+      <div class="pat-section">▼ 組み立てた英文（タップで戻す）</div>
+      <div id="pat-zone" class="pat-zone"></div>
+      <div id="pat-result" class="pat-result"></div>
+      <div style="display:flex;gap:10px;justify-content:center">
+        <button class="btn-secondary btn-sm" onclick="renderPattern()">やり直す</button>
+        <button class="btn-secondary btn-sm" onclick="showHome()">やめる</button>
+        <button id="pat-next" class="btn-primary" style="display:none" onclick="patternNext()">次へ →</button>
+      </div>
+    </div>
+  `);
+}
+
+window.patternMove = (card) => {
+  const pool = document.getElementById('pat-pool');
+  const zone = document.getElementById('pat-zone');
+  if (!pool || !zone) return;
+  if (card.parentNode === pool) {
+    zone.appendChild(card);
+  } else {
+    pool.appendChild(card);
+    document.getElementById('pat-result').textContent = '';
+    document.getElementById('pat-next').style.display = 'none';
+  }
+  patternCheck();
+};
+
+function patternCheck() {
+  const st = state.patternState;
+  const q  = PATTERN_QUESTIONS[st.index];
+  const zone   = document.getElementById('pat-zone');
+  const result = document.getElementById('pat-result');
+  const nextBtn = document.getElementById('pat-next');
+  const cards = [...zone.children];
+  if (cards.length !== q.order.length) { result.textContent = ''; nextBtn.style.display = 'none'; return; }
+
+  const ok = cards.every((c, i) => c.dataset.role === q.order[i]);
+  if (ok) {
+    result.textContent = '⭕ 正解！ Excellent!! ✨';
+    result.style.color = 'var(--success)';
+    nextBtn.style.display = 'inline-block';
+    if (!st.solved) {
+      st.solved = true;
+      st.correct++;
+      playSfx('correct');
+      addPoints(state.student.id, CONFIG.points.patternCorrect);
+    }
+  } else {
+    result.textContent = '❌ 「型」がちがうよ。もう一度！';
+    result.style.color = 'var(--danger)';
+    nextBtn.style.display = 'none';
+    playSfx('wrong');
+  }
+}
+
+window.patternNext = () => {
+  state.patternState.index++;
+  renderPattern();
+};
+
+async function showPatternResult() {
+  const st = state.patternState;
+  const perfect = st.correct === PATTERN_QUESTIONS.length;
+  const bonus = perfect ? CONFIG.points.patternPerfect : 0;
+  if (bonus > 0) await addPoints(state.student.id, bonus);
+  playSfx('win');
+  render(`
+    <div class="overlay"></div>
+    <div class="score-popup">
+      <h2>全問クリア！</h2>
+      <div class="big">🧩</div>
+      <p>${PATTERN_QUESTIONS.length}問中 <strong>${st.correct}問</strong> 正解</p>
+      ${perfect ? `<p style="color:var(--accent);font-weight:700">パーフェクト！ +${bonus}pt 🎉</p>` : ''}
+      <div class="pts-earned">+${st.correct * CONFIG.points.patternCorrect + bonus} pt</div>
+      <p style="color:var(--muted);font-size:.85rem;margin-bottom:20px">合計 ${state.student.points} pt</p>
+      <div style="display:flex;gap:10px">
+        <button class="btn-secondary" onclick="startPattern()">もう一度</button>
+        <button class="btn-primary" onclick="showHome()">ホームへ</button>
       </div>
     </div>
   `);
