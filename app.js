@@ -5,12 +5,12 @@ const CONFIG = {
   grades: ['1年', '2年', '3年'],
   classes: ['1組', '2組', '3組', '4組', '5組', '6組'],
   lessons: Array.from({length: 12}, (_, i) => `Lesson ${i + 1}`),
-  ranks: [
-    { name: 'ペンギンちゃん',   emoji: '🐧', min: 0,    max: 599  },
-    { name: 'イルカちゃん',     emoji: '🐬', min: 600,  max: 899  },
-    { name: 'パンダちゃん',     emoji: '🐼', min: 900,  max: 1499 },
-    { name: 'トラちゃん',       emoji: '🐯', min: 1500, max: 4999 },
-    { name: 'ユニコーンちゃん', emoji: '🦄', min: 5000, max: Infinity },
+   ranks: [
+    { name: 'ペンギンちゃん',   emoji: '🐧', min: 0,     max: 599   },
+    { name: 'イルカちゃん',     emoji: '🐬', min: 600,   max: 1999  },
+    { name: 'パンダちゃん',     emoji: '🐼', min: 2000,  max: 4999  },
+    { name: 'トラちゃん',       emoji: '🐯', min: 5000,  max: 11999 },
+    { name: 'ユニコーンちゃん', emoji: '🦄', min: 12000, max: Infinity },
   ],
   points: {
     typingCorrect: 2,
