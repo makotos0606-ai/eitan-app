@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>英単語チャレンジ！</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="app">
+    <!-- 画面は app.js で動的に描画 -->
+  </div>
+
+  <!-- Firebase SDK -->
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+    import {
+      getFirestore, collection, doc, getDoc, setDoc, updateDoc,
+      getDocs, addDoc, query, where, orderBy
+    } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+
+    // ========== Firebase 設定 ==========
+    // firebase-config.js の内容をここに貼り付けてください
+    // (setup-guide.html の手順3を参照)
+    const firebaseConfig = {
+      apiKey: "AIzaSyDqasBs6ZLzkcylAX-cGfFfS4UirteIR0E",
+      authDomain: "minoshinn-eigobu-2026.firebaseapp.com",
+      projectId: "minoshinn-eigobu-2026",
+      storageBucket: "minoshinn-eigobu-2026.firebasestorage.app",
+      messagingSenderId: "975265918610",
+      appId: "1:975265918610:web:3f5d0a2a064cb119f5c04b",
+      measurementId: "G-GB2VQVPB3D"
+    };
+    // =====================================
+
+    const app = initializeApp(firebaseConfig);
+    const db = getFirestore(app);
+
+    // DB API をグローバルに公開
+    window.__db = db;
+    window.__firebase = {
+      collection, doc, getDoc, setDoc, updateDoc,
+      getDocs, addDoc, query, where, orderBy
+    };
+
+    // アプリ起動
+    const script = document.createElement('script');
+    script.src = 'app.js';
+    document.body.appendChild(script);
+  </script>
+</body>
+</html>
