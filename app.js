@@ -92,22 +92,55 @@ async function saveStudent(student) {
   });
 }
 
-async function addPoints(studentId, pts) {
-  const student = await getStudent(studentId);
-  if (!student) return;
-  const oldRank = getRank(student.points);
-  const newPoints = student.points + pts;
-  await F.updateDoc(F.doc(db, 'students', studentId), {
-    points: newPoints,
-    updatedAt: Date.now(),
-  });
-  state.student.points = newPoints;
-  const newRank = getRank(newPoints);
+// ポイント加算：画面には即反映し、保存は裏でまとめて行う（体感速度UP）
+let _pendingPts = 0;
+let _ptsSaveTimer = null;
+
+function addPoints(studentId, pts) {
+  if (!state.student) return;
+  const oldRank = getRank(state.student.points);
+  state.student.points += pts;          // 即ローカル反映
+  const newRank = getRank(state.student.points);
   if (newRank.name !== oldRank.name) showRankUp(newRank);
-  return newPoints;
+
+  // 保存は1.5秒間まとめて1回だけ書き込む
+  _pendingPts += pts;
+  if (_ptsSaveTimer) clearTimeout(_ptsSaveTimer);
+  _ptsSaveTimer = setTimeout(() => flushPoints(studentId), 1500);
+  return state.student.points;
 }
 
+async function flushPoints(studentId) {
+  if (_pendingPts === 0) return;
+  const toSave = _pendingPts;
+  _pendingPts = 0;
+  try {
+    const inc = F.increment
+      ? F.increment
+      : (await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js")).increment;
+    await F.updateDoc(F.doc(db, 'students', studentId), {
+      points: inc(toSave),
+      updatedAt: Date.now(),
+    });
+  } catch(e) {
+    _pendingPts += toSave; // 失敗したら次回に持ち越し
+  }
+}
+
+// 画面を閉じる直前にも保存を試みる
+window.addEventListener('beforeunload', () => {
+  if (_pendingPts !== 0 && state.student) flushPoints(state.student.id);
+});
+
+// 単語キャッシュ（5分間有効）— 2回目以降のロードを一瞬に
+const _wordsCache = new Map();
+const WORDS_CACHE_MS = 5 * 60 * 1000;
+
 async function getWordsRaw(grade, cls, lesson) {
+  const key = `${grade}|${cls}|${lesson}`;
+  const hit = _wordsCache.get(key);
+  if (hit && Date.now() - hit.at < WORDS_CACHE_MS) return hit.data;
+
   const q = F.query(
     F.collection(db, 'words'),
     F.where('grade', '==', grade),
@@ -115,7 +148,9 @@ async function getWordsRaw(grade, cls, lesson) {
     F.where('lesson', '==', lesson)
   );
   const snap = await F.getDocs(q);
-  return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  const data = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  _wordsCache.set(key, { at: Date.now(), data });
+  return data;
 }
 
 // 語彙アクティビティ用（文型パズルのデータは除外）
@@ -145,8 +180,11 @@ async function getAllWords() {
 }
 
 async function deleteWord(id) {
-  const { deleteDoc } = await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js");
-  await deleteDoc(F.doc(db, 'words', id));
+  const del = F.deleteDoc
+    ? F.deleteDoc
+    : (await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js")).deleteDoc;
+  await del(F.doc(db, 'words', id));
+  _wordsCache.clear(); // キャッシュを無効化
 }
 
 // ===== 画面描画 =====
@@ -396,13 +434,13 @@ window.startActivity = async () => {
     }
     if (errEl) errEl.textContent = '読み込み中…';
 
-    let words = [];
-    for (const l of selectedLessons) {
-      try {
-        const w = await getWords(state.student.grade, state.student.class, l);
-        words = words.concat(w);
-      } catch(e) { /* このレッスンはスキップ */ }
-    }
+    // 全レッスンを同時に取得（1つ失敗しても他は生かす）
+    const results = await Promise.all(
+      selectedLessons.map(l =>
+        getWords(state.student.grade, state.student.class, l).catch(() => [])
+      )
+    );
+    let words = [].concat(...results);
 
     if (words.length === 0) {
       if (errEl) errEl.textContent = '単語が登録されていません。先生に登録してもらおう！';
@@ -489,12 +527,13 @@ window.checkTyping = () => {
     document.getElementById('feedback').textContent = '✨ 正解！';
     document.getElementById('feedback').className = 'typing-feedback ok';
     ts.correct++;
-    setTimeout(async () => {
-      await addPoints(state.student.id, CONFIG.points.typingCorrect);
+    playSfx('correct');
+    addPoints(state.student.id, CONFIG.points.typingCorrect);
+    setTimeout(() => {
       ts.index++;
       ts.hintLevel = 0;
       renderTyping();
-    }, 600);
+    }, 350);
   }
 };
 
@@ -793,12 +832,12 @@ window.checkTypingHint = () => {
     playTypeSound('correct');
     ts.correct++;
     inp.disabled = true;
-    setTimeout(async () => {
-      await addPoints(state.student.id, CONFIG.points.typingCorrect);
+    addPoints(state.student.id, CONFIG.points.typingCorrect); // 即時・待たない
+    setTimeout(() => {
       ts.index++;
       ts.revealing = false;
       renderTypingHint();
-    }, 600);
+    }, 350);
     return;
   }
 
@@ -2362,6 +2401,7 @@ window.addWord = async () => {
   const msg = document.getElementById('add-msg');
   if (!en || !ja) { msg.textContent = '英語と日本語を入力してください'; msg.style.color = 'red'; return; }
   await F.addDoc(F.collection(db, 'words'), { grade, class: cls, lesson, en, ja, createdAt: Date.now() });
+  _wordsCache.clear();
   msg.textContent = `「${en}」を追加しました！`;
   msg.style.color = 'green';
   document.getElementById('add-en').value = '';
@@ -2381,10 +2421,11 @@ window.deleteLesson = async () => {
     return;
   }
   if (!confirm(`${grade} ${cls} ${lesson} の単語 ${words.length}件を全て削除しますか？\nこの操作は元に戻せません。`)) return;
-  const { deleteDoc } = await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js");
-  for (const w of words) {
-    await deleteDoc(F.doc(db, 'words', w.id));
-  }
+  const del = F.deleteDoc
+    ? F.deleteDoc
+    : (await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js")).deleteDoc;
+  await Promise.all(words.map(w => del(F.doc(db, 'words', w.id)))); // 並列削除で高速化
+  _wordsCache.clear();
   const msg = document.getElementById('add-msg');
   msg.textContent = `${words.length}件を削除しました`;
   msg.style.color = 'green';
@@ -2413,16 +2454,13 @@ window.copyWords = async () => {
   const existing = await getWords(toGrade, toClass, toLesson);
   const existingSet = new Set(existing.map(w => w.en.toLowerCase()));
 
-  let count = 0;
-  for (const w of words) {
-    if (!existingSet.has(w.en.toLowerCase())) {
-      await F.addDoc(F.collection(db, 'words'), {
-        grade: toGrade, class: toClass, lesson: toLesson,
-        en: w.en, ja: w.ja, createdAt: Date.now()
-      });
-      count++;
-    }
-  }
+  const toCopy = words.filter(w => !existingSet.has(w.en.toLowerCase()));
+  await Promise.all(toCopy.map(w => F.addDoc(F.collection(db, 'words'), {
+    grade: toGrade, class: toClass, lesson: toLesson,
+    en: w.en, ja: w.ja, createdAt: Date.now()
+  }))); // 並列コピーで高速化
+  const count = toCopy.length;
+  _wordsCache.clear();
 
   msg.textContent = count > 0
     ? `${count}件コピーしました！（重複${words.length - count}件はスキップ）`
@@ -2437,18 +2475,18 @@ window.addBulkWords = async () => {
   const lesson = document.getElementById('add-lesson').value;
   const lines = document.getElementById('bulk-input').value.trim().split('\n');
   const msg = document.getElementById('bulk-msg');
-  let count = 0;
+  const items = [];
   for (const line of lines) {
     const parts = line.split(',');
     if (parts.length >= 2) {
       const en = parts[0].trim();
       const ja = parts[1].trim();
-      if (en && ja) {
-        await F.addDoc(F.collection(db, 'words'), { grade, class: cls, lesson, en, ja, createdAt: Date.now() });
-        count++;
-      }
+      if (en && ja) items.push({ grade, class: cls, lesson, en, ja, createdAt: Date.now() });
     }
   }
+  await Promise.all(items.map(it => F.addDoc(F.collection(db, 'words'), it))); // 並列追加で高速化
+  const count = items.length;
+  _wordsCache.clear();
   msg.textContent = `${count}件追加しました！`;
   msg.style.color = 'green';
   document.getElementById('bulk-input').value = '';

@@ -4,11 +4,20 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>英単語チャレンジ！</title>
+  <!-- 接続を先読みして初期ロードを高速化 -->
+  <link rel="preconnect" href="https://www.gstatic.com" crossorigin>
+  <link rel="preconnect" href="https://firestore.googleapis.com" crossorigin>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <div id="app">
-    <!-- 画面は app.js で動的に描画 -->
+    <!-- 起動中のロード表示（app.jsが描画するまでの間） -->
+    <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;gap:16px;font-family:'Hiragino Sans','Meiryo',sans-serif">
+      <div style="font-size:3rem">📚</div>
+      <div style="width:36px;height:36px;border:4px solid #e2e8f0;border-top-color:#4f8ef7;border-radius:50%;animation:appspin .8s linear infinite"></div>
+      <p style="color:#64748b;font-size:.9rem">読み込み中…</p>
+    </div>
+    <style>@keyframes appspin{to{transform:rotate(360deg)}}</style>
   </div>
 
   <!-- Firebase SDK -->
@@ -16,12 +25,9 @@
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
     import {
       getFirestore, collection, doc, getDoc, setDoc, updateDoc,
-      getDocs, addDoc, query, where, orderBy
+      getDocs, addDoc, query, where, orderBy, increment, deleteDoc
     } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
-    // ========== Firebase 設定 ==========
-    // firebase-config.js の内容をここに貼り付けてください
-    // (setup-guide.html の手順3を参照)
     const firebaseConfig = {
       apiKey: "AIzaSyDqasBs6ZLzkcylAX-cGfFfS4UirteIR0E",
       authDomain: "minoshinn-eigobu-2026.firebaseapp.com",
@@ -31,19 +37,16 @@
       appId: "1:975265918610:web:3f5d0a2a064cb119f5c04b",
       measurementId: "G-GB2VQVPB3D"
     };
-    // =====================================
 
     const app = initializeApp(firebaseConfig);
     const db = getFirestore(app);
 
-    // DB API をグローバルに公開
     window.__db = db;
     window.__firebase = {
       collection, doc, getDoc, setDoc, updateDoc,
-      getDocs, addDoc, query, where, orderBy
+      getDocs, addDoc, query, where, orderBy, increment, deleteDoc
     };
 
-    // アプリ起動
     const script = document.createElement('script');
     script.src = 'app.js';
     document.body.appendChild(script);
