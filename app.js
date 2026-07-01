@@ -710,7 +710,7 @@ function renderTypingHint() {
   const word = ts.list[ts.index];
   ts.lastLen = 0;
 
-  const currentTyped = ts.revealing ? '' : (document.getElementById('type-input')?.value || '');
+  const currentTyped = ''; // 新しい単語では常に空からスタート
 
   render(`
     <style>
