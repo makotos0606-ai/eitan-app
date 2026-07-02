@@ -301,7 +301,99 @@ window.doRegister = async () => {
     await saveStudent(student);
   }
   state.student = student;
+  localStorage.setItem('eitanStudentId', id); // 次回から自動ログイン
   showHome();
+};
+
+// ===== 苦手単語（端末に記憶＋Firestoreにも記録） =====
+function _weakKey() { return `eitanWeak_${state.student?.id || ''}`; }
+function getWeakWords() {
+  try { return JSON.parse(localStorage.getItem(_weakKey()) || '{}'); } catch(e) { return {}; }
+}
+function recordWeak(word) {
+  if (!word?.en) return;
+  const w = getWeakWords();
+  const k = word.en.toLowerCase();
+  w[k] = { en: word.en, ja: word.ja, n: (w[k]?.n || 0) + 1 };
+  localStorage.setItem(_weakKey(), JSON.stringify(w));
+  // 先生の分析用に記録（失敗しても無視）
+  try {
+    F.addDoc(F.collection(db, 'mistakes'), {
+      grade: state.student.grade, class: state.student.class,
+      en: word.en, ja: word.ja, at: Date.now(),
+    }).catch(() => {});
+  } catch(e) {}
+}
+function weakCorrect(word) {
+  if (!word?.en) return;
+  const w = getWeakWords();
+  const k = word.en.toLowerCase();
+  if (!w[k]) return;
+  w[k].n--;
+  if (w[k].n <= 0) delete w[k]; // 克服！
+  localStorage.setItem(_weakKey(), JSON.stringify(w));
+}
+
+// ===== 連続ログイン＆今日のミッション =====
+const DAILY_GOAL = 20;   // 1日の目標正解数
+const DAILY_BONUS = 15;  // 達成ボーナス
+
+function _todayStr() { const d = new Date(); return `${d.getFullYear()}-${d.getMonth()+1}-${d.getDate()}`; }
+
+function updateStreak() {
+  const key = `eitanStreak_${state.student?.id || ''}`;
+  let st; try { st = JSON.parse(localStorage.getItem(key) || 'null'); } catch(e) { st = null; }
+  const today = _todayStr();
+  const yest = (() => { const d = new Date(Date.now() - 864e5); return `${d.getFullYear()}-${d.getMonth()+1}-${d.getDate()}`; })();
+  if (!st || (st.last !== today && st.last !== yest)) st = { last: today, n: 1 };
+  else if (st.last === yest) st = { last: today, n: st.n + 1 };
+  localStorage.setItem(key, JSON.stringify(st));
+  return st.n;
+}
+
+function getDaily() {
+  const key = `eitanDaily_${state.student?.id || ''}`;
+  let d; try { d = JSON.parse(localStorage.getItem(key) || 'null'); } catch(e) { d = null; }
+  if (!d || d.date !== _todayStr()) d = { date: _todayStr(), count: 0, rewarded: false };
+  return d;
+}
+
+function bumpDaily() {
+  if (!state.student) return;
+  const key = `eitanDaily_${state.student.id}`;
+  const d = getDaily();
+  d.count++;
+  if (d.count >= DAILY_GOAL && !d.rewarded) {
+    d.rewarded = true;
+    addPoints(state.student.id, DAILY_BONUS);
+    toast(`🎯 今日のミッション達成！ +${DAILY_BONUS}pt`, 3000);
+    playSfx('win');
+  }
+  localStorage.setItem(key, JSON.stringify(d));
+}
+
+// ===== 苦手単語だけ練習 =====
+window.showWeakMenu = () => {
+  const weak = Object.values(getWeakWords());
+  if (weak.length === 0) { toast('苦手な単語はないよ！すごい！🎉', 2500); return; }
+  render(`
+    ${header()}
+    <div class="container" style="max-width:560px">
+      <div class="card">
+        <h2 style="color:#ef4444;margin-bottom:4px">💪 苦手な単語だけ練習</h2>
+        <p style="color:var(--muted);margin-bottom:16px">まちがえた単語 ${weak.length}語 に挑戦！正解すればリストから消えるよ</p>
+        <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:20px">
+          ${weak.slice(0, 30).map(w => `<span style="background:#fef2f2;color:#b91c1c;border-radius:8px;padding:4px 10px;font-size:.85rem;font-weight:600">${w.en}</span>`).join('')}
+          ${weak.length > 30 ? `<span style="color:var(--muted)">…ほか${weak.length - 30}語</span>` : ''}
+        </div>
+        <div style="display:grid;gap:10px">
+          <button class="btn-primary" onclick='startTypingHint(${JSON.stringify(weak).replace(/'/g, "&#39;")})'>✏️ タイピングで練習</button>
+          ${weak.length >= 2 ? `<button class="btn-primary" style="background:linear-gradient(135deg,#7c3aed,#c026d3)" onclick='startQuiz(${JSON.stringify(weak).replace(/'/g, "&#39;")})'>🧠 4択テストで練習</button>` : ''}
+          <button class="btn-secondary" onclick="showHome()">← 戻る</button>
+        </div>
+      </div>
+    </div>
+  `);
 };
 
 // --- ホーム ---
@@ -311,6 +403,10 @@ function showHome() {
   const rank = getRank(s.points);
   const next = getNextRank(s.points);
   const prog = rankProgress(s.points);
+  const streak = updateStreak();
+  const daily = getDaily();
+  const dailyPct = Math.min(100, Math.round(daily.count / DAILY_GOAL * 100));
+  const weakCount = Object.keys(getWeakWords()).length;
 
   render(`
     ${header()}
@@ -327,6 +423,25 @@ function showHome() {
           <div class="progress-bar"><div class="progress-fill" style="width:${prog}%"></div></div>
         </div>
         <div class="pts">${s.points} pt</div>
+      </div>
+
+      <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:16px">
+        <div style="flex:1;min-width:160px;background:white;border-radius:12px;padding:12px 16px;box-shadow:var(--shadow);display:flex;align-items:center;gap:10px">
+          <span style="font-size:1.6rem">🔥</span>
+          <div>
+            <div style="font-weight:800;font-size:1.1rem">連続 ${streak} 日</div>
+            <div style="font-size:.75rem;color:var(--muted)">毎日続けよう！</div>
+          </div>
+        </div>
+        <div style="flex:2;min-width:220px;background:white;border-radius:12px;padding:12px 16px;box-shadow:var(--shadow)">
+          <div style="display:flex;justify-content:space-between;font-size:.85rem;margin-bottom:6px">
+            <span style="font-weight:700">🎯 今日のミッション：${DAILY_GOAL}問正解</span>
+            <span style="color:${daily.rewarded ? 'var(--success)' : 'var(--muted)'};font-weight:700">
+              ${daily.rewarded ? `達成！ +${DAILY_BONUS}pt 🎉` : `${daily.count} / ${DAILY_GOAL}`}
+            </span>
+          </div>
+          <div class="progress-bar"><div class="progress-fill" style="width:${dailyPct}%;background:linear-gradient(90deg,#f59e0b,#ef4444)"></div></div>
+        </div>
       </div>
 
       <h3 style="margin-bottom:14px;color:var(--muted)">何をやる？</h3>
@@ -365,6 +480,11 @@ function showHome() {
           <div class="icon">🧩</div>
           <h3>文型パズル</h3>
           <p>カードを並べて英文の「型」を作ろう</p>
+        </div>
+        <div class="menu-card" onclick="showWeakMenu()" style="${weakCount > 0 ? 'border:2px solid #fca5a5' : ''}">
+          <div class="icon">💪</div>
+          <h3>苦手な単語だけ練習</h3>
+          <p>${weakCount > 0 ? `まちがえた ${weakCount}語 をやっつけよう！` : 'まちがえた単語がここにたまるよ'}</p>
         </div>
         <div class="menu-card" onclick="showRanking()">
           <div class="icon">🏆</div>
@@ -528,6 +648,9 @@ window.checkTyping = () => {
     document.getElementById('feedback').className = 'typing-feedback ok';
     ts.correct++;
     playSfx('correct');
+    speakWord(word.en);
+    weakCorrect(word);
+    bumpDaily();
     addPoints(state.student.id, CONFIG.points.typingCorrect);
     setTimeout(() => {
       ts.index++;
@@ -548,6 +671,8 @@ window.handleTypingKey = (e) => {
       document.getElementById('feedback').textContent = `❌ 正解は「${word.en}」`;
       document.getElementById('feedback').className = 'typing-feedback ng';
       ts.wrong++;
+      recordWeak(word);
+      playSfx('wrong');
       setTimeout(() => {
         inp.classList.remove('wrong');
         inp.value = '';
@@ -676,8 +801,19 @@ function _beep(freqFrom, freqTo, dur, type = 'sine', vol = 0.18, delay = 0) {
   } catch(e) {}
 }
 
+// ===== サウンド設定（生徒が🔊/🔇で切替、端末に記憶） =====
+window._sfxMuted = localStorage.getItem('eitanMuted') === '1';
+window.toggleMute = () => {
+  window._sfxMuted = !window._sfxMuted;
+  localStorage.setItem('eitanMuted', window._sfxMuted ? '1' : '0');
+  const btn = document.getElementById('mute-btn');
+  if (btn) btn.textContent = window._sfxMuted ? '🔇' : '🔊';
+  toast(window._sfxMuted ? 'サウンドOFF' : 'サウンドON', 1200);
+};
+
 // kind: type/correct/wrong/select/match/pop/hit/miss/win
 function playSfx(kind = 'type') {
+  if (window._sfxMuted) return;
   switch (kind) {
     case 'correct': _beep(880, 1320, 0.18, 'sine', 0.25); break;
     case 'wrong':   _beep(220, 140, 0.15, 'square', 0.16); break;
@@ -709,6 +845,8 @@ function renderTypingHint() {
   if (ts.index >= ts.list.length) { showTypingHintResult(); return; }
   const word = ts.list[ts.index];
   ts.lastLen = 0;
+  ts.lastGood = '';
+  ts.misTyped = false;
 
   const currentTyped = ''; // 新しい単語では常に空からスタート
 
@@ -811,9 +949,24 @@ window.checkTypingHint = () => {
   const word = ts.list[ts.index];
   const inp  = document.getElementById('type-input');
   if (!inp) return;
-  const raw    = inp.value.trim();
-  const val    = raw.toLowerCase();
+  let raw      = inp.value.trim();
+  let val      = raw.toLowerCase();
   const target = word.en.toLowerCase();
+
+  // ❌ 間違った文字は入力させない（直前の正しい状態に戻す）
+  if (val && !target.startsWith(val)) {
+    playSfx('wrong');
+    if (!ts.misTyped) {           // この単語で初めてのミスだけ記録
+      ts.misTyped = true;
+      ts.wrong++;
+      recordWeak(word);
+    }
+    raw = ts.lastGood || '';
+    val = raw.toLowerCase();
+    inp.value = raw;
+  } else {
+    ts.lastGood = raw;            // 正しい途中経過を保存
+  }
 
   // バックスペース（削除）判定
   const isDelete = raw.length < (ts.lastLen || 0);
@@ -830,6 +983,9 @@ window.checkTypingHint = () => {
   // 正解
   if (val === target) {
     playTypeSound('correct');
+    speakWord(word.en);   // 発音を聞いて定着
+    weakCorrect(word);
+    bumpDaily();
     ts.correct++;
     inp.disabled = true;
     addPoints(state.student.id, CONFIG.points.typingCorrect); // 即時・待たない
@@ -861,6 +1017,7 @@ window.handleTypingHintKey = (e) => {
   // 不正解 → 正解を表示してから次へ
   ts.wrong++;
   ts.revealing = true;
+  recordWeak(word);
   playTypeSound('wrong');
 
   const wordColorArea = document.getElementById('word-color-area');
@@ -977,18 +1134,22 @@ window.answerQuiz = async (btn) => {
   const fb = document.getElementById('quiz-feedback');
   const isCorrect = chosen === word.ja;
 
+  speakWord(word.en); // 正誤にかかわらず発音を聞く
   if (isCorrect) {
     btn.classList.add('selected-correct');
     fb.textContent = '✨ 正解！';
     fb.style.color = 'var(--success)';
     qs.correct++;
     playSfx('correct');
-    await addPoints(state.student.id, CONFIG.points.quizCorrect);
+    weakCorrect(word);
+    bumpDaily();
+    addPoints(state.student.id, CONFIG.points.quizCorrect);
   } else {
     btn.classList.add('selected-wrong');
     fb.textContent = `❌ 正解は「${word.ja}」`;
     fb.style.color = 'var(--danger)';
     playSfx('wrong');
+    recordWeak(word);
     document.querySelectorAll('.choice-btn').forEach(b => {
       if (b.dataset.ja === word.ja) b.classList.add('show-correct');
     });
@@ -1028,11 +1189,16 @@ async function showQuizResult() {
 }
 
 // --- ランキング ---
-async function showRanking() {
+async function showRanking(scope = 'class') {
   state.screen = 'ranking';
   render(`${header()}<div class="container"><p style="color:var(--muted)">読み込み中…</p></div>`);
-  const students = await getAllStudents();
-  const myRank = students.findIndex(s => s.id === state.student?.id) + 1;
+  let students = await getAllStudents();
+  const me = state.student;
+  if (scope === 'class' && me) {
+    students = students.filter(s => s.grade === me.grade && s.class === me.class);
+  }
+  const myRank = students.findIndex(s => s.id === me?.id) + 1;
+  const tabBtn = (sc, label) => `<button class="btn-${scope === sc ? 'primary' : 'secondary'} btn-sm" onclick="showRanking('${sc}')">${label}</button>`;
 
   render(`
     ${header()}
@@ -1040,6 +1206,10 @@ async function showRanking() {
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
         <h2>🏆 ランキング</h2>
         <button class="btn-secondary btn-sm" onclick="showHome()">← 戻る</button>
+      </div>
+      <div style="display:flex;gap:8px;margin-bottom:14px">
+        ${tabBtn('class', `👥 ${me ? me.grade + ' ' + me.class : 'クラス'}内`)}
+        ${tabBtn('all', '🌏 全体')}
       </div>
       ${myRank > 0 ? `<p style="margin-bottom:12px;color:var(--primary);font-weight:600">あなたは ${myRank} 位！</p>` : ''}
       <div class="card" style="padding:0;overflow:hidden">
@@ -1300,6 +1470,7 @@ function hitShooterTarget(targetObj, cx, cy) {
     ss.hits++;
     ss.answered++;
     ss.score += 100;
+    bumpDaily();
     playSfx('hit');
     showShooterFX(cx, cy, true, '✓ ' + currentWord.en);
     updateShooterHUD();
@@ -1568,6 +1739,7 @@ window.selectMemCard = (cardId) => {
     // マッチ！
     ms.matched.add(card.pairId);
     ms.selected = null;
+    bumpDaily();
     playSfx('match');
     renderMemory();
     if (ms.matched.size === ms.enCards.length) {
@@ -1854,6 +2026,7 @@ function renderPOP() {
 }
 
 window.speakWord = (word) => {
+  if (window._sfxMuted) return;
   if (!window.speechSynthesis) { toast('このブラウザは音声未対応です'); return; }
   window.speechSynthesis.cancel();
   const utter = new SpeechSynthesisUtterance(word);
@@ -2285,6 +2458,8 @@ async function renderTeacher() {
     content = await renderTeacherWords();
   } else if (tab === 'pattern') {
     content = renderTeacherPattern();
+  } else if (tab === 'analysis') {
+    content = await renderTeacherAnalysis();
   } else if (tab === 'students') {
     content = await renderTeacherStudents();
   } else if (tab === 'settings') {
@@ -2297,6 +2472,7 @@ async function renderTeacher() {
       <div class="teacher-tabs">
         <button class="${tab === 'words' ? 'active' : 'inactive'}" onclick="teacherTab('words')">単語管理</button>
         <button class="${tab === 'pattern' ? 'active' : 'inactive'}" onclick="teacherTab('pattern')">文型パズル</button>
+        <button class="${tab === 'analysis' ? 'active' : 'inactive'}" onclick="teacherTab('analysis')">苦手分析</button>
         <button class="${tab === 'students' ? 'active' : 'inactive'}" onclick="teacherTab('students')">生徒一覧</button>
         <button class="${tab === 'settings' ? 'active' : 'inactive'}" onclick="teacherTab('settings')">設定</button>
       </div>
@@ -2533,6 +2709,55 @@ window.removeWord = async (id) => {
   loadWordList();
 };
 
+// ===== 先生：苦手分析（生徒がよく間違う単語） =====
+async function renderTeacherAnalysis() {
+  let rows = '';
+  try {
+    const snap = await F.getDocs(F.collection(db, 'mistakes'));
+    const recs = snap.docs.map(d => d.data());
+    if (recs.length === 0) {
+      rows = `<p style="color:var(--muted)">まだ記録がありません。生徒が間違えると自動でたまります。</p>`;
+    } else {
+      // 単語ごとに集計
+      const agg = new Map();
+      for (const r of recs) {
+        const k = `${r.en}|${r.grade}|${r.class}`;
+        if (!agg.has(k)) agg.set(k, { en: r.en, ja: r.ja, grade: r.grade, class: r.class, n: 0 });
+        agg.get(k).n++;
+      }
+      const top = [...agg.values()].sort((a, b) => b.n - a.n).slice(0, 30);
+      rows = `
+        <table class="ranking-table">
+          <thead><tr><th>順位</th><th>単語</th><th>意味</th><th>学年・組</th><th>間違い回数</th></tr></thead>
+          <tbody>
+            ${top.map((w, i) => `<tr>
+              <td class="rank-no">${i + 1}</td>
+              <td style="font-weight:700">${w.en}</td>
+              <td>${w.ja}</td>
+              <td>${w.grade} ${w.class}</td>
+              <td style="color:#ef4444;font-weight:700">${w.n}回</td>
+            </tr>`).join('')}
+          </tbody>
+        </table>`;
+    }
+  } catch(e) {
+    rows = `
+      <div class="note" style="background:#fef2f2;border-color:#ef4444">
+        <p style="color:#991b1b;font-size:.9rem;line-height:1.7">
+          ⚠️ データを読み込めませんでした。Firebaseのルールに以下を追加してください：<br>
+          <code style="display:block;background:#fff;padding:8px;border-radius:6px;margin-top:6px">match /mistakes/{docId} {<br>&nbsp;&nbsp;allow read, write: if true;<br>}</code>
+        </p>
+      </div>`;
+  }
+  return `
+    <div class="card">
+      <h3 style="margin-bottom:6px;color:#7c3aed">📊 よく間違われる単語 TOP30</h3>
+      <p style="color:var(--muted);font-size:.85rem;margin-bottom:16px">生徒がタイピング・ミニテストで間違えた単語の集計です。授業の重点指導に活用できます。</p>
+      ${rows}
+    </div>
+  `;
+}
+
 // ===== 先生：文型パズル管理 =====
 function renderTeacherPattern() {
   return `
@@ -2730,7 +2955,8 @@ function header() {
       <h1 onclick="showHome()" style="cursor:pointer">📚 英単語チャレンジ</h1>
       <div class="header-right">
         ${rank ? `<span class="rank-badge">${rank.emoji} ${s.name}</span>` : ''}
-        <button class="btn-secondary btn-sm" onclick="state.student=null;state.role=null;showLogin()">ログアウト</button>
+        <button id="mute-btn" class="btn-secondary btn-sm" onclick="toggleMute()" title="サウンド切替">${window._sfxMuted ? '🔇' : '🔊'}</button>
+        <button class="btn-secondary btn-sm" onclick="localStorage.removeItem('eitanStudentId');state.student=null;state.role=null;showLogin()">ログアウト</button>
       </div>
     </div>
   `;
@@ -2749,7 +2975,23 @@ if (typeof window.__db === 'undefined') {
       </div>
     </div>`;
 } else {
-  showLogin();
+  // 前回の生徒情報があれば自動ログイン
+  (async () => {
+    const savedId = localStorage.getItem('eitanStudentId');
+    if (savedId) {
+      try {
+        const student = await getStudent(savedId);
+        if (student) {
+          state.student = student;
+          state.role = 'student';
+          showHome();
+          return;
+        }
+      } catch(e) {}
+      localStorage.removeItem('eitanStudentId');
+    }
+    showLogin();
+  })();
 
   // 先生ダッシュボードの単語一覧を遅延ロード
   document.addEventListener('click', (e) => {
