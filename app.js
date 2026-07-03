@@ -2240,15 +2240,30 @@ function buildPatternItem(raw) {
 }
 
 // --- 選択メニュー ---
+const PATTERN_NICKNAME = {
+  '1': { name: 'スティッチ構文', ex: '「スティッチ、寝る」' },
+  '2': { name: '「僕はクマ〜♪」構文', ex: '「僕は＝クマ」' },
+  '3': { name: 'マッシュル構文', ex: '「俺の握力は全てを破壊する」' },
+  '4': { name: 'サンタさん構文', ex: '「サンタは子どもにプレゼントをあげる」' },
+  '5': { name: 'あだ名構文', ex: '「みんなは俺をキングと呼ぶ」' },
+};
+
 function startPattern() {
   state.screen = 'pattern';
-  const btn = (mode, sub, color) => `
+  const btn = (mode, sub, color) => {
+    const nick = PATTERN_NICKNAME[mode];
+    return `
     <button class="menu-card" style="text-align:center;cursor:pointer;border:none;width:100%"
       onclick="patternMode('${mode}')">
       <div class="icon" style="font-size:1.6rem">${color}</div>
-      <h3 style="margin:4px 0">${PATTERN_MODE_LABEL[mode]}</h3>
+      ${nick ? `
+        <div style="font-weight:800;font-size:1.02rem;color:var(--primary);margin:4px 0 2px">${nick.name}</div>
+        <div style="font-size:.78rem;color:var(--accent);margin-bottom:6px">${nick.ex}</div>
+        <h3 style="margin:2px 0;font-size:.95rem">${PATTERN_MODE_LABEL[mode]}</h3>
+      ` : `<h3 style="margin:4px 0">${PATTERN_MODE_LABEL[mode]}</h3>`}
       <p>${sub}</p>
     </button>`;
+  };
   render(`
     ${header()}
     <div class="container" style="max-width:720px">
