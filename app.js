@@ -2918,7 +2918,7 @@ async function renderTeacherStudents() {
     <div class="card">
       <h3 style="margin-bottom:16px;color:#7c3aed">👥 生徒一覧 (${students.length}名)</h3>
       <table class="ranking-table">
-        <thead><tr><th>順位</th><th>名前</th><th>学年・クラス</th><th>ランク</th><th>ポイント</th></tr></thead>
+        <thead><tr><th>順位</th><th>名前</th><th>学年・クラス</th><th>ランク</th><th>ポイント</th><th></th></tr></thead>
         <tbody>
           ${students.map((s, i) => {
             const rank = getRank(s.points);
@@ -2928,6 +2928,7 @@ async function renderTeacherStudents() {
               <td><span class="tag tag-grade">${s.grade}</span> <span class="tag tag-class">${s.class}</span></td>
               <td>${rank.emoji} ${rank.name}</td>
               <td>${s.points} pt</td>
+              <td><button class="btn-danger btn-sm" onclick="deleteStudent('${s.id.replace(/'/g, "\\'")}', '${s.name.replace(/'/g, "\\'")}')">削除</button></td>
             </tr>`;
           }).join('')}
         </tbody>
@@ -2935,6 +2936,16 @@ async function renderTeacherStudents() {
     </div>
   `;
 }
+
+window.deleteStudent = async (id, name) => {
+  if (!confirm(`「${name}」さんのアカウントを削除しますか？\nポイントや登録情報が消え、元に戻せません。`)) return;
+  const del = F.deleteDoc
+    ? F.deleteDoc
+    : (await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js")).deleteDoc;
+  await del(F.doc(db, 'students', id));
+  toast(`「${name}」さんを削除しました`);
+  renderTeacher(); // 一覧を再表示
+};
 
 function renderTeacherSettings() {
   return `
