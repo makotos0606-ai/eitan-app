@@ -2810,6 +2810,26 @@ function renderTeacherPattern() {
       <textarea id="pat-input" rows="6" placeholder="私は野球をします。 | I[S] play[V] baseball.[O]"></textarea>
       <button class="btn-primary" style="margin-top:8px" onclick="addPatternSentences()">➕ まとめて追加</button>
       <p id="pat-msg" style="margin-top:8px;font-size:.9rem;min-height:18px"></p>
+
+      <hr style="margin:20px 0;border:none;border-top:1px solid #f1f5f9">
+      <h4 style="color:#7c3aed;margin-bottom:8px">📂 他のクラスからコピー</h4>
+      <p style="color:var(--muted);font-size:.85rem;margin-bottom:8px">別のクラス・レッスンに登録済みの文を、上で選んだ「学年・クラス・レッスン」へそのままコピーします</p>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr auto;gap:10px;align-items:end">
+        <div class="form-group" style="margin:0">
+          <label>コピー元 学年</label>
+          <select id="pat-copy-grade">${CONFIG.grades.map(g => `<option value="${g}">${g}</option>`).join('')}</select>
+        </div>
+        <div class="form-group" style="margin:0">
+          <label>コピー元 クラス</label>
+          <select id="pat-copy-class">${CONFIG.classes.map(c => `<option value="${c}">${c}</option>`).join('')}</select>
+        </div>
+        <div class="form-group" style="margin:0">
+          <label>コピー元 レッスン</label>
+          <select id="pat-copy-lesson">${CONFIG.lessons.map(l => `<option value="${l}">${l}</option>`).join('')}</select>
+        </div>
+        <button class="btn-primary" style="white-space:nowrap" onclick="copyPatterns()">コピー実行</button>
+      </div>
+      <p id="pat-copy-msg" style="margin-top:8px;font-size:.9rem;min-height:18px"></p>
     </div>
 
     <div class="card">
@@ -2904,6 +2924,45 @@ async function loadPatternList() {
     </div>`;
   }).join('');
 }
+
+window.copyPatterns = async () => {
+  const fromGrade  = document.getElementById('pat-copy-grade').value;
+  const fromClass  = document.getElementById('pat-copy-class').value;
+  const fromLesson = document.getElementById('pat-copy-lesson').value;
+  const toGrade    = document.getElementById('pat-grade').value;
+  const toClass    = document.getElementById('pat-class').value;
+  const toLesson   = document.getElementById('pat-lesson').value;
+  const msg = document.getElementById('pat-copy-msg');
+
+  if (fromGrade === toGrade && fromClass === toClass && fromLesson === toLesson) {
+    msg.textContent = 'コピー元とコピー先が同じです'; msg.style.color = 'red'; return;
+  }
+
+  const pats = await getPatternsByLesson(fromGrade, fromClass, fromLesson);
+  if (pats.length === 0) {
+    msg.textContent = 'コピー元に文が登録されていません'; msg.style.color = 'red'; return;
+  }
+
+  // コピー先の既存文と重複チェック（日本語＋英文で判定）
+  const existing = await getPatternsByLesson(toGrade, toClass, toLesson);
+  const keyOf = p => `${p.ja}|${(p.chunks || []).map(c => c.text).join(' ')}`;
+  const existingSet = new Set(existing.map(keyOf));
+
+  const toCopy = pats.filter(p => !existingSet.has(keyOf(p)));
+  await Promise.all(toCopy.map(p => F.addDoc(F.collection(db, 'words'), {
+    kind: 'pattern',
+    grade: toGrade, class: toClass, lesson: toLesson,
+    ja: p.ja, chunks: p.chunks, pattern: p.pattern,
+    createdAt: Date.now(),
+  })));
+  _wordsCache.clear();
+
+  msg.textContent = toCopy.length > 0
+    ? `${toCopy.length}文コピーしました！（重複${pats.length - toCopy.length}文はスキップ）`
+    : '全て重複のためスキップしました';
+  msg.style.color = toCopy.length > 0 ? 'green' : 'orange';
+  loadPatternList();
+};
 
 window.deletePattern = async (id) => {
   if (!confirm('この文を削除しますか？')) return;
