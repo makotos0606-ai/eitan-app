@@ -2957,9 +2957,30 @@ function renderTeacherSettings() {
           ${CONFIG.ranks.map(r => `<tr><td>${r.emoji} ${r.name}</td><td>${r.min} pt〜</td></tr>`).join('')}
         </tbody>
       </table>
+
+      <hr style="margin:24px 0;border:none;border-top:1px solid #f1f5f9">
+      <h4 style="margin-bottom:8px;color:#ef4444">⚠️ 危険な操作</h4>
+      <p style="color:var(--muted);font-size:.85rem;margin-bottom:12px">全生徒のポイントを0に戻します（名前や登録情報は残ります）。元に戻せません。</p>
+      <button class="btn-danger" onclick="resetAllPoints()">🔄 全生徒のポイントを0にリセット</button>
+      <p id="reset-msg" style="margin-top:10px;font-size:.9rem;min-height:18px"></p>
     </div>
   `;
 }
+
+window.resetAllPoints = async () => {
+  const students = await getAllStudents();
+  if (students.length === 0) { toast('生徒がいません'); return; }
+  if (!confirm(`全生徒 ${students.length}人 のポイントを0にリセットします。\nこの操作は元に戻せません。よろしいですか？`)) return;
+  if (!confirm('本当に実行しますか？（最終確認）')) return;
+
+  const msg = document.getElementById('reset-msg');
+  if (msg) { msg.textContent = 'リセット中…'; msg.style.color = 'orange'; }
+  await Promise.all(students.map(s =>
+    F.updateDoc(F.doc(db, 'students', s.id), { points: 0, updatedAt: Date.now() }).catch(() => {})
+  ));
+  if (msg) { msg.textContent = `${students.length}人のポイントを0にリセットしました`; msg.style.color = 'green'; }
+  toast('リセット完了！');
+};
 
 // --- 共通ヘッダー ---
 function header() {
