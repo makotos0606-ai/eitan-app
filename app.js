@@ -2289,16 +2289,8 @@ window.patternMode = async (mode) => {
   let list = [];
 
   if (mode === 'textbook') {
-    render(`${header()}<div class="container"><p style="color:var(--muted)">読み込み中…</p></div>`);
-    try {
-      const pats = await getPatternsFor(state.student.grade, state.student.class);
-      list = pats.map(p => ({ hint: p.ja, cards: p.chunks, order: p.chunks.map(c => c.role), pattern: p.pattern }));
-    } catch(e) {}
-    if (list.length === 0) {
-      toast('教科書本文がまだ登録されていません。先生に登録してもらおう！', 3500);
-      startPattern();
-      return;
-    }
+    showPatternLessonSelect();
+    return;
   } else if (mode === 'mix') {
     const all = [].concat(...Object.keys(PATTERN_BANK).map(k => PATTERN_BANK[k]));
     list = shuffle(all).slice(0, 12).map(buildPatternItem);
@@ -2308,6 +2300,69 @@ window.patternMode = async (mode) => {
   }
 
   state.patternState = { list: shuffle(list), index: 0, correct: 0, solved: false, mode };
+  renderPattern();
+};
+
+// --- 教科書本文：レッスン選択（複数選択OK） ---
+let patternLessons = [];
+
+function showPatternLessonSelect() {
+  patternLessons = [];
+  render(`
+    ${header()}
+    <div class="container" style="max-width:560px">
+      <div class="card">
+        <h2 style="color:var(--primary);margin-bottom:4px">📖 教科書本文</h2>
+        <p style="color:var(--muted);margin-bottom:4px">${state.student.grade} ${state.student.class} のレッスンを選んでね</p>
+        <p style="color:var(--accent);font-size:.85rem;margin-bottom:16px">複数選択OK！タップで選択／解除</p>
+        <div class="form-group">
+          <label>レッスン</label>
+          <div class="select-grid">
+            ${CONFIG.lessons.map(l => `<button class="select-btn" onclick="togglePatternLesson('${l}',this)">${l}</button>`).join('')}
+          </div>
+        </div>
+        <div id="pat-lesson-count" style="text-align:center;color:var(--muted);font-size:.85rem;margin-bottom:12px"></div>
+        <div style="display:flex;gap:10px">
+          <button class="btn-secondary" style="flex:1" onclick="startPattern()">← 戻る</button>
+          <button class="btn-primary" style="flex:2" onclick="startPatternTextbook()">スタート！</button>
+        </div>
+        <p id="pat-lesson-error" style="color:#ef4444;margin-top:10px;font-size:.9rem;min-height:18px"></p>
+      </div>
+    </div>
+  `);
+}
+
+window.togglePatternLesson = (l, btn) => {
+  const idx = patternLessons.indexOf(l);
+  if (idx === -1) { patternLessons.push(l); btn.classList.add('active'); }
+  else            { patternLessons.splice(idx, 1); btn.classList.remove('active'); }
+  const el = document.getElementById('pat-lesson-count');
+  if (el) el.textContent = patternLessons.length > 0 ? `${patternLessons.length}レッスン選択中` : '';
+};
+
+window.startPatternTextbook = async () => {
+  const errEl = document.getElementById('pat-lesson-error');
+  if (patternLessons.length === 0) {
+    if (errEl) errEl.textContent = 'レッスンを選んでください';
+    return;
+  }
+  if (errEl) errEl.textContent = '読み込み中…';
+
+  // 選んだレッスンの文を並列取得
+  const results = await Promise.all(
+    patternLessons.map(l =>
+      getPatternsByLesson(state.student.grade, state.student.class, l).catch(() => [])
+    )
+  );
+  const pats = [].concat(...results);
+  const list = pats.map(p => ({ hint: p.ja, cards: p.chunks, order: p.chunks.map(c => c.role), pattern: p.pattern }));
+
+  if (list.length === 0) {
+    if (errEl) errEl.textContent = 'このレッスンには文が登録されていません。先生に登録してもらおう！';
+    return;
+  }
+
+  state.patternState = { list: shuffle(list), index: 0, correct: 0, solved: false, mode: 'textbook' };
   renderPattern();
 };
 
