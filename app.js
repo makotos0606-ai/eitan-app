@@ -588,7 +588,15 @@ window.startActivity = async () => {
 };
 
 // --- タイピング練習 ---
-function shuffle(arr) { return [...arr].sort(() => Math.random() - .5); }
+// Fisher-Yates（偏りのない本物のシャッフル）
+function shuffle(arr) {
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
 
 function startTyping(words) {
   state.screen = 'typing';
@@ -2371,7 +2379,15 @@ function renderPattern() {
   if (st.index >= st.list.length) { showPatternResult(); return; }
   st.solved = false;
   const q = st.list[st.index];
-  const shuffled = shuffle([...q.cards]);
+  // 元の語順と同じにならないまでシャッフル（最大10回試行）
+  let shuffled = shuffle(q.cards);
+  if (q.cards.length > 1) {
+    let tries = 0;
+    while (tries < 10 && shuffled.every((c, i) => c === q.cards[i])) {
+      shuffled = shuffle(q.cards);
+      tries++;
+    }
+  }
 
   const cardHTML = (c) => {
     const dark = c.role === 'AUX';
