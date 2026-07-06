@@ -840,11 +840,28 @@ function playTypeSound(kind = 'type') { playSfx(kind); }
 
 function startTypingHint(words) {
   state.screen = 'typing-hint';
-  const list = shuffle(words);
+  // 同じ単語は1回だけ（複数レッスンの重複を除去）→ 1巡のみ
+  const seen = new Set();
+  const unique = words.filter(w => {
+    const k = w.en.toLowerCase();
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
+  const list = shuffle(unique);
   state.typingHintState = {
     list, index: 0, correct: 0, wrong: 0,
-    revealing: false, lastLen: 0
+    revealing: false, lastLen: 0,
+    startTime: Date.now(),
+    lesson: selectedLessons.join('+') || '-',
   };
+  // 経過タイム表示（200msごと更新）
+  const ts = state.typingHintState;
+  ts._timer = setInterval(() => {
+    if (state.screen !== 'typing-hint' || state.typingHintState !== ts) { clearInterval(ts._timer); return; }
+    const el = document.getElementById('th-timer');
+    if (el) el.textContent = formatMemTime(Date.now() - ts.startTime);
+  }, 200);
   renderTypingHint();
 }
 
@@ -926,9 +943,12 @@ function renderTypingHint() {
     <div class="th-wrap" onclick="document.getElementById('type-input')?.focus()">
       <div class="th-header">
         <div class="th-counter">${ts.index + 1}/${ts.list.length}</div>
-        <div style="display:flex;gap:8px;align-items:center">
-          <button class="th-skip" onclick="skipTypingHint()">スキップ</button>
-          <button class="th-quit" onclick="showHome()">✕</button>
+        <div style="display:flex;gap:8px;align-items:center;flex-direction:column">
+          <div class="th-counter" id="th-timer" style="font-size:1.5rem">${formatMemTime(Date.now() - ts.startTime)}</div>
+          <div style="display:flex;gap:8px">
+            <button class="th-skip" onclick="skipTypingHint()">スキップ</button>
+            <button class="th-quit" onclick="showHome()">✕</button>
+          </div>
         </div>
         <div class="th-counter">${ts.correct}</div>
       </div>
@@ -1053,20 +1073,89 @@ window.skipTypingHint = () => {
 
 async function showTypingHintResult() {
   const ts = state.typingHintState;
-  const bonus = ts.correct === ts.list.length ? CONFIG.points.typingLesson : 0;
-  if (bonus > 0) await addPoints(state.student.id, bonus);
+  if (ts._timer) clearInterval(ts._timer);
+  const timeMs  = Date.now() - ts.startTime;
+  const timeSec = timeMs / 1000;
+  const timeStr = formatMemTime(timeMs);
+  const nWords  = ts.list.length;
+  const s = state.student;
+  playSfx('win');
+
+  const bonus = ts.correct === nWords ? CONFIG.points.typingLesson : 0;
+  if (bonus > 0) addPoints(s.id, bonus);
+
   render(`
-    <div class="overlay"></div>
-    <div class="score-popup">
-      <h2>練習おわり！</h2>
-      <div class="big">✏️</div>
-      <p>${ts.list.length}問中 <strong>${ts.correct}問</strong> 正解</p>
-      ${bonus > 0 ? `<p style="color:var(--accent);font-weight:700">パーフェクトボーナス +${bonus}pt 🎉</p>` : ''}
-      <div class="pts-earned">+${ts.correct * CONFIG.points.typingCorrect + bonus} pt</div>
-      <p style="color:var(--muted);font-size:.85rem;margin-bottom:20px">合計 ${state.student.points} pt</p>
+    ${header()}
+    <div class="container" style="max-width:520px;padding-top:32px;text-align:center">
+      <div style="font-size:3rem">✏️</div>
+      <p style="color:var(--muted);margin-top:12px">記録を保存中…</p>
+    </div>
+  `);
+
+  // 記録保存＆ランキング取得（memoryRecordsを共用・kind:'typing'で区別）
+  let records = [];
+  try {
+    await F.addDoc(F.collection(db, 'memoryRecords'), {
+      kind: 'typing',
+      studentId: s.id, name: s.name, grade: s.grade, class: s.class,
+      lesson: ts.lesson, words: nWords, correct: ts.correct,
+      timeSec, createdAt: Date.now(),
+    });
+    const snap = await F.getDocs(F.collection(db, 'memoryRecords'));
+    const all = snap.docs.map(d => d.data()).filter(r => r.kind === 'typing' && r.words > 0);
+    // 生徒ごとにベスト（1語あたり平均が最小）だけ残す
+    const bestMap = {};
+    all.forEach(r => {
+      const per = r.timeSec / r.words;
+      if (!bestMap[r.studentId] || per < bestMap[r.studentId].timeSec / bestMap[r.studentId].words) {
+        bestMap[r.studentId] = r;
+      }
+    });
+    records = Object.values(bestMap).sort((a, b) => a.timeSec / a.words - b.timeSec / b.words);
+  } catch(e) { /* ランキング表示は諦めて結果だけ出す */ }
+
+  const myRank = records.findIndex(r => r.studentId === s.id) + 1;
+  const perWord = (timeSec / nWords).toFixed(1);
+
+  render(`
+    ${header()}
+    <div class="container" style="max-width:560px">
+      <div style="background:linear-gradient(135deg,#eff6ff,#dbeafe);border-radius:20px;
+        padding:28px 24px;text-align:center;margin-bottom:20px;box-shadow:var(--shadow)">
+        <div style="font-size:3rem;margin-bottom:4px">✏️</div>
+        <h2 style="color:#1d4ed8;margin-bottom:12px">1巡クリア！</h2>
+        <div style="font-size:2.6rem;font-weight:900;color:#1e293b;font-variant-numeric:tabular-nums">${timeStr}</div>
+        <p style="color:var(--muted);margin:6px 0 12px">${nWords}語 ／ 正解 ${ts.correct} ／ 1語平均 ${perWord}秒</p>
+        ${bonus > 0 ? `<p style="color:var(--accent);font-weight:700">パーフェクトボーナス +${bonus}pt 🎉</p>` : ''}
+        <div class="pts-earned">+${ts.correct * CONFIG.points.typingCorrect + bonus} pt</div>
+        ${myRank > 0 ? `<p style="font-weight:800;color:#1d4ed8;font-size:1.1rem;margin-top:8px">🏅 あなたは全体 ${myRank}位！（1語平均の速さ）</p>` : ''}
+      </div>
+
+      ${records.length > 0 ? `
+      <div class="card" style="padding:0;overflow:hidden;margin-bottom:16px">
+        <div style="padding:14px 16px 6px"><h3 style="color:#1d4ed8">⚡ スピードランキング TOP10</h3>
+        <p style="font-size:.78rem;color:var(--muted)">1語あたりの平均タイムで比較（レッスン数がちがっても公平！）</p></div>
+        <table class="ranking-table">
+          <thead><tr><th>順位</th><th>名前</th><th>学年・組</th><th>語数</th><th>タイム</th><th>1語平均</th></tr></thead>
+          <tbody>
+            ${records.slice(0, 10).map((r, i) => {
+              const isMe = r.studentId === s.id;
+              return `<tr style="${isMe ? 'background:#eff6ff;font-weight:700' : ''}">
+                <td class="rank-no">${i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : i + 1}</td>
+                <td>${r.name}${isMe ? ' 👈' : ''}</td>
+                <td>${r.grade} ${r.class}</td>
+                <td>${r.words}</td>
+                <td>${formatMemTime(r.timeSec * 1000)}</td>
+                <td>${(r.timeSec / r.words).toFixed(1)}秒</td>
+              </tr>`;
+            }).join('')}
+          </tbody>
+        </table>
+      </div>` : ''}
+
       <div style="display:flex;gap:10px">
-        <button class="btn-secondary" onclick="showLessonSelect('typing-hint')">もう一度</button>
-        <button class="btn-primary" onclick="showHome()">ホームへ</button>
+        <button class="btn-secondary" style="flex:1" onclick="showLessonSelect('typing-hint')">もう一度</button>
+        <button class="btn-primary" style="flex:1" onclick="showHome()">ホームへ</button>
       </div>
     </div>
   `);
@@ -1807,7 +1896,7 @@ async function showMemoryResult(timeMs) {
 
     // ランキング取得（全体 - フィルタなし、全学年・全組・全レッスン）
     const snap = await F.getDocs(F.collection(db, 'memoryRecords'));
-    allRecords = snap.docs.map(d => d.data());
+    allRecords = snap.docs.map(d => d.data()).filter(r => r.kind !== 'typing'); // タイピング記録は除外
   } catch(e) {
     // エラー内容を結果画面に一時表示して原因特定
     render(`
@@ -1970,12 +2059,53 @@ window.startPOP = () => {
   renderPOP();
 };
 
+// --- 読み上げ判定の制限時間（秒） ---
+const POP_TIME_LIMIT = 8;
+
+function clearPOPTimer() {
+  const ps = state.popState;
+  if (ps?._timer) { clearInterval(ps._timer); ps._timer = null; }
+}
+
+function startPOPTimer() {
+  const ps = state.popState;
+  clearPOPTimer();
+  ps.timeLeft = POP_TIME_LIMIT;
+  ps._timer = setInterval(() => {
+    if (!state.popState || state.popState !== ps) { clearInterval(ps._timer); return; }
+    ps.timeLeft--;
+    const el = document.getElementById('pop-timer');
+    if (el) {
+      el.textContent = ps.timeLeft;
+      el.style.color = ps.timeLeft <= 3 ? '#ef4444' : '#be185d';
+      if (ps.timeLeft <= 3) playSfx('select'); // カウントダウン音
+    }
+    if (ps.timeLeft <= 0) {
+      clearPOPTimer();
+      // 時間切れ → 正解の発音を自動再生し「読めなかった」扱いで次の人へ
+      const card = ps.drawnCard;
+      toast('⏰ 時間切れ！正解の発音を聞こう', 2000);
+      if (card?.en) speakWord(card.en);
+      playSfx('wrong');
+      // ボタンを無効化（二重操作防止）
+      document.querySelectorAll('.btn-success, .btn-danger').forEach(b => b.disabled = true);
+      setTimeout(() => {
+        // まだ同じカードの判定待ちのときだけ実行
+        if (state.popState === ps && ps.phase === 'reveal' && ps.drawnCard === card) {
+          cardResult(false);
+        }
+      }, 1800); // 発音を聞く時間を確保
+    }
+  }, 1000);
+}
+
 // --- メインゲーム画面 ---
 function renderPOP() {
   const ps = state.popState;
   const player = ps.players[ps.currentPlayer];
   const remaining = ps.deck.length;
   const totalCards = ps.players.reduce((s, p) => s + p.cards.length, 0);
+  clearPOPTimer();
 
   render(`
     ${header()}
@@ -2014,6 +2144,11 @@ function renderPOP() {
           <button class="btn-primary" style="background:linear-gradient(135deg,#e11d48,#be123c)" onclick="resolvePOP()">OK</button>
         ` : `
           <p style="color:var(--muted);margin-bottom:8px;font-size:.9rem">${player.name} さんが引いたカード</p>
+          <div style="display:flex;align-items:center;justify-content:center;gap:6px;margin-bottom:8px">
+            <span style="font-size:1.1rem">⏰</span>
+            <span id="pop-timer" style="font-size:1.8rem;font-weight:900;color:#be185d;font-variant-numeric:tabular-nums">${POP_TIME_LIMIT}</span>
+            <span style="font-size:.85rem;color:var(--muted)">秒以内にジャッジ！</span>
+          </div>
           <div style="font-size:2.6rem;font-weight:900;letter-spacing:2px;color:#1e293b;margin-bottom:20px">${ps.drawnCard.en}</div>
           <p style="color:#be185d;font-size:.9rem;margin-bottom:16px">読めるか確認してから発音を聞いてみよう！</p>
           <button onclick="speakWord('${ps.drawnCard.en.replace(/'/g,"\\\'")}')"
@@ -2031,6 +2166,8 @@ function renderPOP() {
       <button class="btn-secondary btn-sm" onclick="if(confirm('ゲームを終了しますか？'))showPOPResult()">ゲームを終わらせる</button>
     </div>
   `);
+  // 単語カードが出ている間だけタイマー起動
+  if (ps.phase === 'reveal' && ps.drawnCard?.type === 'word') startPOPTimer();
 }
 
 window.speakWord = (word) => {
@@ -2054,6 +2191,8 @@ window.drawCard = () => {
 
 window.cardResult = (canRead) => {
   const ps = state.popState;
+  if (!ps || ps.phase !== 'reveal' || !ps.drawnCard) return; // 二重実行防止
+  clearPOPTimer();
   const player = ps.players[ps.currentPlayer];
   if (canRead) {
     player.cards.push(ps.drawnCard);
@@ -2085,6 +2224,7 @@ window.resolvePOP = () => {
 // --- 結果画面 ---
 function showPOPResult() {
   const ps = state.popState;
+  clearPOPTimer();
   const ranked = [...ps.players].sort((a, b) => b.cards.length - a.cards.length);
   const winner = ranked[0];
   playSfx('win');
