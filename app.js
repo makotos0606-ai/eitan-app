@@ -1896,7 +1896,7 @@ async function showMemoryResult(timeMs) {
 
     // ランキング取得（全体 - フィルタなし、全学年・全組・全レッスン）
     const snap = await F.getDocs(F.collection(db, 'memoryRecords'));
-    allRecords = snap.docs.map(d => d.data()).filter(r => r.kind !== 'typing'); // タイピング記録は除外
+    allRecords = snap.docs.map(d => d.data()).filter(r => !r.kind); // 神経衰弱の記録のみ（typing/pattern除外）
   } catch(e) {
     // エラー内容を結果画面に一時表示して原因特定
     render(`
@@ -2447,9 +2447,23 @@ window.patternMode = async (mode) => {
     list = shuffle([...pool]).slice(0, 10).map(buildPatternItem);
   }
 
-  state.patternState = { list: shuffle(list), index: 0, correct: 0, solved: false, mode };
-  renderPattern();
+  beginPatternSession(list, mode);
 };
+
+// タイム計測付きでセッション開始
+function beginPatternSession(list, mode) {
+  const st = {
+    list: shuffle(list), index: 0, correct: 0, solved: false, mode,
+    startTime: Date.now(),
+  };
+  state.patternState = st;
+  st._timer = setInterval(() => {
+    if (state.screen !== 'pattern' || state.patternState !== st) { clearInterval(st._timer); return; }
+    const el = document.getElementById('pat-timer');
+    if (el) el.textContent = formatMemTime(Date.now() - st.startTime);
+  }, 200);
+  renderPattern();
+}
 
 // --- 教科書本文：レッスン選択（複数選択OK） ---
 let patternLessons = [];
@@ -2510,8 +2524,7 @@ window.startPatternTextbook = async () => {
     return;
   }
 
-  state.patternState = { list: shuffle(list), index: 0, correct: 0, solved: false, mode: 'textbook' };
-  renderPattern();
+  beginPatternSession(list, 'textbook');
 };
 
 function renderPattern() {
@@ -2556,6 +2569,7 @@ function renderPattern() {
     <div class="container" style="max-width:820px">
       <div class="typing-progress">
         <span>${st.index + 1} / ${st.list.length}</span>
+        <span id="pat-timer" style="font-weight:800;color:var(--primary);font-variant-numeric:tabular-nums">${formatMemTime(Date.now() - st.startTime)}</span>
         <span>✅ ${st.correct}</span>
       </div>
       <div class="pat-mission">
@@ -2626,23 +2640,95 @@ window.patternNext = () => {
 
 async function showPatternResult() {
   const st = state.patternState;
-  const perfect = st.correct === st.list.length;
-  const bonus = perfect ? CONFIG.points.patternPerfect : 0;
-  if (bonus > 0) await addPoints(state.student.id, bonus);
+  if (st._timer) clearInterval(st._timer);
+  const timeMs  = Date.now() - st.startTime;
+  const timeSec = timeMs / 1000;
+  const timeStr = formatMemTime(timeMs);
+  const nQ      = st.list.length;
+  const s       = state.student;
+  const modeLabel = PATTERN_MODE_LABEL[st.mode] || st.mode;
   playSfx('win');
+
+  const perfect = st.correct === nQ;
+  const bonus = perfect ? CONFIG.points.patternPerfect : 0;
+  if (bonus > 0) addPoints(s.id, bonus);
+
   render(`
-    <div class="overlay"></div>
-    <div class="score-popup">
-      <h2>全問クリア！</h2>
-      <div class="big">🧩</div>
-      <p>${st.list.length}問中 <strong>${st.correct}問</strong> 正解</p>
-      ${perfect ? `<p style="color:var(--accent);font-weight:700">パーフェクト！ +${bonus}pt 🎉</p>` : ''}
-      <div class="pts-earned">+${st.correct * CONFIG.points.patternCorrect + bonus} pt</div>
-      <p style="color:var(--muted);font-size:.85rem;margin-bottom:20px">合計 ${state.student.points} pt</p>
+    ${header()}
+    <div class="container" style="max-width:520px;padding-top:32px;text-align:center">
+      <div style="font-size:3rem">🧩</div>
+      <p style="color:var(--muted);margin-top:12px">記録を保存中…</p>
+    </div>
+  `);
+
+  // 記録保存＆同カテゴリのランキング取得（memoryRecords共用・kind:'pattern'）
+  let records = [];
+  try {
+    await F.addDoc(F.collection(db, 'memoryRecords'), {
+      kind: 'pattern',
+      mode: st.mode,
+      studentId: s.id, name: s.name, grade: s.grade, class: s.class,
+      questions: nQ, correct: st.correct,
+      timeSec, createdAt: Date.now(),
+    });
+    const snap = await F.getDocs(F.collection(db, 'memoryRecords'));
+    const all = snap.docs.map(d => d.data())
+      .filter(r => r.kind === 'pattern' && r.mode === st.mode && r.questions > 0);
+    // 生徒ごとに1巡の最速タイムだけ残す
+    const bestMap = {};
+    all.forEach(r => {
+      if (!bestMap[r.studentId] || r.timeSec < bestMap[r.studentId].timeSec) {
+        bestMap[r.studentId] = r;
+      }
+    });
+    records = Object.values(bestMap).sort((a, b) => a.timeSec - b.timeSec);
+  } catch(e) { /* ランキングは諦めて結果だけ表示 */ }
+
+  const myRank = records.findIndex(r => r.studentId === s.id) + 1;
+  const nick = PATTERN_NICKNAME[st.mode];
+
+  render(`
+    ${header()}
+    <div class="container" style="max-width:560px">
+      <div style="background:linear-gradient(135deg,#eff6ff,#e0e7ff);border-radius:20px;
+        padding:28px 24px;text-align:center;margin-bottom:20px;box-shadow:var(--shadow)">
+        <div style="font-size:3rem;margin-bottom:4px">🧩</div>
+        <h2 style="color:#4338ca;margin-bottom:4px">全問クリア！</h2>
+        <p style="color:var(--primary);font-weight:800;margin-bottom:12px">${nick ? nick.name + '／' : ''}${modeLabel}</p>
+        <div style="font-size:2.6rem;font-weight:900;color:#1e293b;font-variant-numeric:tabular-nums">${timeStr}</div>
+        <p style="color:var(--muted);margin:6px 0 12px">${nQ}問 ／ 正解 ${st.correct}</p>
+        ${perfect ? `<p style="color:var(--accent);font-weight:700">パーフェクト！ +${bonus}pt 🎉</p>` : ''}
+        <div class="pts-earned">+${st.correct * CONFIG.points.patternCorrect + bonus} pt</div>
+        ${myRank > 0 ? `<p style="font-weight:800;color:#4338ca;font-size:1.1rem;margin-top:8px">🏅 このカテゴリで ${myRank}位！</p>` : ''}
+      </div>
+
+      ${records.length > 0 ? `
+      <div class="card" style="padding:0;overflow:hidden;margin-bottom:16px">
+        <div style="padding:14px 16px 6px">
+          <h3 style="color:#4338ca">⚡ ${modeLabel} ランキング TOP10</h3>
+          <p style="font-size:.78rem;color:var(--muted)">1巡のタイムで比較</p>
+        </div>
+        <table class="ranking-table">
+          <thead><tr><th>順位</th><th>名前</th><th>学年・組</th><th>問題数</th><th>タイム</th></tr></thead>
+          <tbody>
+            ${records.slice(0, 10).map((r, i) => {
+              const isMe = r.studentId === s.id;
+              return `<tr style="${isMe ? 'background:#eff6ff;font-weight:700' : ''}">
+                <td class="rank-no">${i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : i + 1}</td>
+                <td>${r.name}${isMe ? ' 👈' : ''}</td>
+                <td>${r.grade} ${r.class}</td>
+                <td>${r.questions}</td>
+                <td>${formatMemTime(r.timeSec * 1000)}</td>
+              </tr>`;
+            }).join('')}
+          </tbody>
+        </table>
+      </div>` : ''}
+
       <div style="display:flex;gap:10px">
-        <button class="btn-secondary" onclick="patternMode('${st.mode}')">もう一度</button>
-        <button class="btn-secondary" onclick="startPattern()">型を選び直す</button>
-        <button class="btn-primary" onclick="showHome()">ホームへ</button>
+        <button class="btn-secondary" style="flex:1" onclick="patternMode('${st.mode}')">もう一度</button>
+        <button class="btn-secondary" style="flex:1" onclick="startPattern()">型を選び直す</button>
+        <button class="btn-primary" style="flex:1" onclick="showHome()">ホームへ</button>
       </div>
     </div>
   `);
