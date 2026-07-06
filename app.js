@@ -1065,19 +1065,26 @@ window.handleTypingHintKey = (e) => {
   }, 1600);
 };
 
+const TYPING_SKIP_PENALTY_SEC = 180; // スキップ1回につき+3分
+
 window.skipTypingHint = () => {
-  state.typingHintState.index++;
-  state.typingHintState.revealing = false;
+  const ts = state.typingHintState;
+  ts.skips = (ts.skips || 0) + 1;
+  toast('⏱ スキップ +3分', 1500);
+  ts.index++;
+  ts.revealing = false;
   renderTypingHint();
 };
 
 async function showTypingHintResult() {
   const ts = state.typingHintState;
   if (ts._timer) clearInterval(ts._timer);
-  const timeMs  = Date.now() - ts.startTime;
-  const timeSec = timeMs / 1000;
-  const timeStr = formatMemTime(timeMs);
-  const nWords  = ts.list.length;
+  const rawSec     = (Date.now() - ts.startTime) / 1000;
+  const skips      = ts.skips || 0;
+  const penaltySec = skips * TYPING_SKIP_PENALTY_SEC;
+  const timeSec    = rawSec + penaltySec;   // ランキングに使うのはペナルティ込みのタイム
+  const timeStr    = formatMemTime(timeSec * 1000);
+  const nWords     = ts.list.length;
   const s = state.student;
   playSfx('win');
 
@@ -1125,7 +1132,8 @@ async function showTypingHintResult() {
         <div style="font-size:3rem;margin-bottom:4px">✏️</div>
         <h2 style="color:#1d4ed8;margin-bottom:12px">1巡クリア！</h2>
         <div style="font-size:2.6rem;font-weight:900;color:#1e293b;font-variant-numeric:tabular-nums">${timeStr}</div>
-        <p style="color:var(--muted);margin:6px 0 12px">${nWords}語 ／ 正解 ${ts.correct} ／ 1語平均 ${perWord}秒</p>
+        <p style="color:var(--muted);margin:6px 0 4px">${nWords}語 ／ 正解 ${ts.correct} ／ 1語平均 ${perWord}秒</p>
+        ${skips > 0 ? `<p style="color:#ef4444;font-weight:700;font-size:.9rem;margin-bottom:8px">⏱ スキップ ${skips}回 → +${skips * 3}分 加算（実タイム ${formatMemTime(rawSec * 1000)}）</p>` : ''}
         ${bonus > 0 ? `<p style="color:var(--accent);font-weight:700">パーフェクトボーナス +${bonus}pt 🎉</p>` : ''}
         <div class="pts-earned">+${ts.correct * CONFIG.points.typingCorrect + bonus} pt</div>
         ${myRank > 0 ? `<p style="font-weight:800;color:#1d4ed8;font-size:1.1rem;margin-top:8px">🏅 あなたは全体 ${myRank}位！（1語平均の速さ）</p>` : ''}
