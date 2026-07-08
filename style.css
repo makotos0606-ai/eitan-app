@@ -428,9 +428,39 @@ label { display: block; font-weight: 600; margin-bottom: 6px; font-size: .9rem; 
 }
 
 /* ===== レスポンシブ ===== */
+/* 横スクロールを防ぐ（見切れ対策の土台） */
+html, body { max-width: 100%; overflow-x: hidden; }
+* { -webkit-tap-highlight-color: transparent; }
+
+/* 幅の広い表はスクロールできる箱に入れる（ランキング・生徒一覧の見切れ対策） */
+.card { overflow-x: auto; }
+.ranking-table, .word-list-table { min-width: 100%; }
+
+@media (max-width: 640px) {
+  .container { padding: 16px 12px; }
+  .header { padding: 12px 14px; }
+  .header h1 { font-size: 1.05rem; }
+  .header-right { gap: 6px; }
+  .btn-sm { padding: 6px 10px; font-size: .78rem; }
+
+  .profile-bar { padding: 12px 14px; }
+  .profile-bar .name { font-size: .95rem; }
+
+  /* 表を詰めて画面内に収める */
+  .ranking-table th, .ranking-table td { padding: 8px 8px; font-size: .82rem; }
+  .ranking-table .rank-no { font-size: 1rem; }
+}
+
 @media (max-width: 500px) {
-  .card { padding: 20px; }
+  .card { padding: 18px 14px; }
   .word-en { font-size: 1.8rem; }
   .quiz-choices { grid-template-columns: 1fr; }
-  .menu-grid { grid-template-columns: 1fr 1fr; }
+  .menu-grid { grid-template-columns: 1fr 1fr; gap: 10px; }
+  .menu-card { padding: 16px 10px; }
+  .menu-card h3 { font-size: .95rem; }
+  .menu-card p { font-size: .75rem; }
+}
+
+@media (max-width: 380px) {
+  .menu-grid { grid-template-columns: 1fr; }
 }

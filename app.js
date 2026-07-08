@@ -928,8 +928,14 @@ function renderTypingHint() {
         transform: translateY(-2px);
       }
       .th-key.typed { background: rgba(255,255,255,.35); color: rgba(255,255,255,.6); }
-      .th-input-area { position: absolute; top: -100px; }
-      #type-input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+      .th-input-area { display: flex; justify-content: center; padding: 8px 14px 4px; }
+      /* font-size:16px以上でiOSの自動ズームを防ぐ。見える入力欄でスマホでも一発でキーボードが開く */
+      #type-input {
+        width: 100%; max-width: 320px; padding: 12px 16px; border: none; border-radius: 12px;
+        font-size: 16px; font-weight: 700; text-align: center; letter-spacing: 2px;
+        outline: none; background: rgba(255,255,255,.95); color: #1e293b;
+        box-shadow: 0 3px 10px rgba(0,0,0,.15);
+      }
       .th-skip {
         background: rgba(255,255,255,.25); border: 2px solid rgba(255,255,255,.5);
         color: white; border-radius: 10px; padding: 7px 12px;
@@ -958,8 +964,9 @@ function renderTypingHint() {
         <div class="th-typed-row" id="typed-row-area">${buildTypedRowHTML(word, currentTyped)}</div>
       </div>
       <div class="th-input-area">
-        <input id="type-input" type="text"
-          autocomplete="off" autocorrect="off" spellcheck="false"
+        <input id="type-input" type="text" inputmode="latin"
+          autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"
+          placeholder="ここをタップして入力"
           ${ts.revealing ? 'disabled' : ''}
           oninput="checkTypingHint()" onkeydown="handleTypingHintKey(event)">
       </div>
@@ -2593,7 +2600,6 @@ function renderPattern() {
       <div style="display:flex;gap:10px;justify-content:center">
         <button class="btn-secondary btn-sm" onclick="renderPattern()">やり直す</button>
         <button class="btn-secondary btn-sm" onclick="showHome()">やめる</button>
-        <button id="pat-next" class="btn-primary" style="display:none" onclick="patternNext()">次へ →</button>
       </div>
     </div>
   `);
@@ -2618,25 +2624,25 @@ function patternCheck() {
   const q  = st.list[st.index];
   const zone   = document.getElementById('pat-zone');
   const result = document.getElementById('pat-result');
-  const nextBtn = document.getElementById('pat-next');
   const cards = [...zone.children];
-  if (cards.length !== q.order.length) { result.textContent = ''; nextBtn.style.display = 'none'; return; }
+  if (cards.length !== q.order.length) { result.textContent = ''; return; }
 
   const ok = cards.every((c, i) => c.dataset.role === q.order[i]);
   if (ok) {
     result.textContent = '⭕ 正解！ Excellent!! ✨';
     result.style.color = 'var(--success)';
-    nextBtn.style.display = 'inline-block';
     if (!st.solved) {
       st.solved = true;
       st.correct++;
       playSfx('correct');
       addPoints(state.student.id, CONFIG.points.patternCorrect);
+      // 正解したら自動で次の問題へ
+      zone.querySelectorAll('.pat-card').forEach(c => c.style.pointerEvents = 'none');
+      setTimeout(() => patternNext(), 800);
     }
   } else {
     result.textContent = '❌ 「型」がちがうよ。もう一度！';
     result.style.color = 'var(--danger)';
-    nextBtn.style.display = 'none';
     playSfx('wrong');
   }
 }
@@ -3338,9 +3344,53 @@ function renderTeacherSettings() {
       <p style="color:var(--muted);font-size:.85rem;margin-bottom:12px">全生徒のポイントを0に戻します（名前や登録情報は残ります）。元に戻せません。</p>
       <button class="btn-danger" onclick="resetAllPoints()">🔄 全生徒のポイントを0にリセット</button>
       <p id="reset-msg" style="margin-top:10px;font-size:.9rem;min-height:18px"></p>
+
+      <hr style="margin:24px 0;border:none;border-top:1px solid #f1f5f9">
+      <h4 style="margin-bottom:8px;color:#ef4444">🏆 ランキング記録の削除</h4>
+      <p style="color:var(--muted);font-size:.85rem;margin-bottom:12px">タイム系ランキングの記録を消します（生徒のアカウントやポイントは残ります）。元に戻せません。</p>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn-danger btn-sm" onclick="clearRecords('memory')">🎴 神経衰弱の記録を削除</button>
+        <button class="btn-danger btn-sm" onclick="clearRecords('typing')">✏️ タイピングの記録を削除</button>
+        <button class="btn-danger btn-sm" onclick="clearRecords('pattern')">🧩 文型パズルの記録を削除</button>
+        <button class="btn-danger btn-sm" onclick="clearRecords('all')">🗑️ 全ランキング記録を削除</button>
+      </div>
+      <p id="rec-msg" style="margin-top:10px;font-size:.9rem;min-height:18px"></p>
     </div>
   `;
 }
+
+// ランキング記録の削除（種類別）
+window.clearRecords = async (type) => {
+  const labels = { memory: '神経衰弱', typing: 'タイピング', pattern: '文型パズル', all: '全ランキング' };
+  const msg = document.getElementById('rec-msg');
+  if (!confirm(`「${labels[type]}」のランキング記録をすべて削除します。\n元に戻せません。よろしいですか？`)) return;
+
+  if (msg) { msg.textContent = '削除中…'; msg.style.color = 'orange'; }
+  try {
+    const snap = await F.getDocs(F.collection(db, 'memoryRecords'));
+    const del = F.deleteDoc
+      ? F.deleteDoc
+      : (await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js")).deleteDoc;
+
+    // type判定：memory=kindなし / typing / pattern / all=全部
+    const targets = snap.docs.filter(d => {
+      const kind = d.data().kind;
+      if (type === 'all') return true;
+      if (type === 'memory') return !kind;
+      return kind === type;
+    });
+
+    if (targets.length === 0) {
+      if (msg) { msg.textContent = '削除する記録がありませんでした'; msg.style.color = 'gray'; }
+      return;
+    }
+    await Promise.all(targets.map(d => del(F.doc(db, 'memoryRecords', d.id)).catch(() => {})));
+    if (msg) { msg.textContent = `${labels[type]}の記録 ${targets.length}件を削除しました`; msg.style.color = 'green'; }
+    toast('削除完了！');
+  } catch(e) {
+    if (msg) { msg.textContent = 'エラー: ' + (e?.message || e); msg.style.color = 'red'; }
+  }
+};
 
 window.resetAllPoints = async () => {
   const students = await getAllStudents();
