@@ -1592,9 +1592,15 @@ function assignShooterWords() {
     )
   ]);
 
+  const isMobile = window.innerWidth < 520;
   ss.targets.forEach((t, i) => {
     t.wordEn = assignments[i] ? assignments[i].en : wrongs[0].en;
     t.plate.textContent = t.wordEn;
+    // 長い単語はスマホで文字を縮めて札を小さく
+    if (isMobile) {
+      t.plate.style.fontSize = t.wordEn.length >= 10 ? '.58rem' : t.wordEn.length >= 7 ? '.66rem' : '.74rem';
+      t.plate.style.padding = '3px 4px';
+    }
     t.alive = true;
     t.el.style.opacity = '1';
     t.el.style.pointerEvents = 'auto';
@@ -1854,14 +1860,11 @@ function renderMemory() {
       </div>
 
       <!-- 英語・日本語混合グリッド -->
-      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px">
+      <div class="mem-grid">
         ${ms.allCards.map(card => `
           <div onclick="selectMemCard('${card.id}')"
-            style="padding:16px 10px;border-radius:14px;border:2px solid;text-align:center;
-              font-weight:700;font-size:${card.type==='en' ? '1rem' : '.9rem'};
-              transition:all .15s;min-height:80px;
-              display:flex;align-items:center;justify-content:center;
-              ${cardStyle(card)}">
+            class="mem-card mem-${card.type}"
+            style="${cardStyle(card)}">
             ${card.text}
           </div>
         `).join('')}

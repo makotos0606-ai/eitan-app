@@ -427,6 +427,40 @@ label { display: block; font-weight: 600; margin-bottom: 6px; font-size: .9rem; 
   100% { transform: scale(1.8); opacity: 0; }
 }
 
+/* ===== 神経衰弱 ===== */
+.mem-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+}
+.mem-card {
+  padding: 16px 10px;
+  border-radius: 14px;
+  border: 2px solid;
+  text-align: center;
+  font-weight: 700;
+  transition: all .15s;
+  min-height: 80px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;               /* 長い単語が列幅を押し広げるのを防ぐ */
+  overflow-wrap: anywhere;    /* はみ出す単語は折り返す */
+}
+.mem-en { font-size: 1rem; }
+.mem-ja { font-size: .9rem; }
+
+@media (max-width: 520px) {
+  .mem-grid { gap: 6px; }
+  .mem-card {
+    padding: 10px 4px;
+    min-height: 64px;
+    border-radius: 10px;
+  }
+  .mem-en { font-size: .78rem; }
+  .mem-ja { font-size: .7rem; }
+}
+
 /* ===== レスポンシブ ===== */
 /* 横スクロールを防ぐ（見切れ対策の土台） */
 html, body { max-width: 100%; overflow-x: hidden; }
