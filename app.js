@@ -901,6 +901,7 @@ function renderTypingHint() {
       .th-word-color {
         font-size: 1.4rem; font-family: 'Courier New',monospace;
         letter-spacing: 4px; margin-bottom: 6px; font-weight: 700;
+        white-space: nowrap;
       }
       .th-word-ja { font-size: 1.4rem; font-weight: 800; color: #1e293b; margin-bottom: 8px; }
       .th-typed-row {
@@ -928,6 +929,20 @@ function renderTypingHint() {
         transform: translateY(-2px);
       }
       .th-key.typed { background: rgba(255,255,255,.35); color: rgba(255,255,255,.6); }
+      /* スマホ：キーを画面幅に合わせて伸縮させ、見切れを防ぐ */
+      @media (max-width: 520px) {
+        .th-keyboard { padding: 2px 4px 0; }
+        .th-kb-row { gap: 3px; margin-bottom: 3px; }
+        .th-key {
+          min-width: 0; flex: 1; max-width: 34px;
+          height: 32px; font-size: .6rem; padding: 0 1px;
+          border-radius: 5px; box-shadow: 0 2px 0 rgba(0,0,0,.22);
+        }
+        .th-word-color { font-size: 1.15rem; letter-spacing: 2px; }
+        .th-word-ja { font-size: 1.15rem; }
+        .th-card { margin: 8px 10px 4px; padding: 12px 12px 10px; }
+        .th-counter { font-size: 1.4rem; }
+      }
       .th-input-area { display: flex; justify-content: center; padding: 8px 14px 4px; }
       /* font-size:16px以上でiOSの自動ズームを防ぐ。見える入力欄でスマホでも一発でキーボードが開く */
       #type-input {
@@ -948,7 +963,7 @@ function renderTypingHint() {
     </style>
     <div class="th-wrap" onclick="document.getElementById('type-input')?.focus()">
       <div class="th-header">
-        <div class="th-counter">${ts.index + 1}/${ts.list.length}</div>
+        <div class="th-counter" id="th-progress">${ts.index + 1}/${ts.list.length}</div>
         <div style="display:flex;gap:8px;align-items:center;flex-direction:column">
           <div class="th-counter" id="th-timer" style="font-size:1.5rem">${formatMemTime(Date.now() - ts.startTime)}</div>
           <div style="display:flex;gap:8px">
@@ -956,18 +971,17 @@ function renderTypingHint() {
             <button class="th-quit" onclick="showHome()">✕</button>
           </div>
         </div>
-        <div class="th-counter">${ts.correct}</div>
+        <div class="th-counter" id="th-correct">${ts.correct}</div>
       </div>
       <div class="th-card">
-        <div class="th-word-color" id="word-color-area">${buildWordColorHTML(word, currentTyped)}</div>
-        <div class="th-word-ja">${word.ja}</div>
+        <div class="th-word-color" id="word-color-area" style="${wordFitStyle(word)}">${buildWordColorHTML(word, currentTyped)}</div>
+        <div class="th-word-ja" id="word-ja-area">${word.ja}</div>
         <div class="th-typed-row" id="typed-row-area">${buildTypedRowHTML(word, currentTyped)}</div>
       </div>
       <div class="th-input-area">
         <input id="type-input" type="text" inputmode="latin"
           autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"
           placeholder="ここをタップして入力"
-          ${ts.revealing ? 'disabled' : ''}
           oninput="checkTypingHint()" onkeydown="handleTypingHintKey(event)">
       </div>
       <div class="th-keyboard" id="keyboard-area">
@@ -976,6 +990,46 @@ function renderTypingHint() {
     </div>
   `);
   setTimeout(() => document.getElementById('type-input')?.focus(), 50);
+}
+
+// 長い単語は文字を少し小さくして1行に収める
+function wordFitStyle(word) {
+  const n = word.en.length;
+  if (n >= 13) return 'font-size:.85rem;letter-spacing:1px';
+  if (n >= 10) return 'font-size:1rem;letter-spacing:2px';
+  return '';
+}
+
+// 画面を作り直さずに次の単語へ差し替える（スマホのキーボードが閉じない）
+function advanceTypingHint() {
+  const ts = state.typingHintState;
+  ts.index++;
+  ts.revealing = false;
+  if (ts.index >= ts.list.length) { showTypingHintResult(); return; }
+
+  const word = ts.list[ts.index];
+  ts.lastLen = 0;
+  ts.lastGood = '';
+  ts.misTyped = false;
+
+  const inp = document.getElementById('type-input');
+  if (inp) { inp.readOnly = false; inp.value = ''; inp.focus(); }
+
+  const wordColorArea = document.getElementById('word-color-area');
+  if (wordColorArea) {
+    wordColorArea.style.cssText = wordFitStyle(word);
+    wordColorArea.innerHTML = buildWordColorHTML(word, '');
+  }
+  const jaArea = document.getElementById('word-ja-area');
+  if (jaArea) jaArea.textContent = word.ja;
+  const typedRowArea = document.getElementById('typed-row-area');
+  if (typedRowArea) typedRowArea.innerHTML = buildTypedRowHTML(word, '');
+  const kbArea = document.getElementById('keyboard-area');
+  if (kbArea) kbArea.innerHTML = buildKeyboardHTML(word, '');
+  const prog = document.getElementById('th-progress');
+  if (prog) prog.textContent = `${ts.index + 1}/${ts.list.length}`;
+  const corr = document.getElementById('th-correct');
+  if (corr) corr.textContent = ts.correct;
 }
 
 window.checkTypingHint = () => {
@@ -1022,13 +1076,10 @@ window.checkTypingHint = () => {
     weakCorrect(word);
     bumpDaily();
     ts.correct++;
-    inp.disabled = true;
+    ts.revealing = true;
+    inp.readOnly = true;  // disabledと違いフォーカスが外れない（スマホ対策）
     addPoints(state.student.id, CONFIG.points.typingCorrect); // 即時・待たない
-    setTimeout(() => {
-      ts.index++;
-      ts.revealing = false;
-      renderTypingHint();
-    }, 350);
+    setTimeout(() => advanceTypingHint(), 350);
     return;
   }
 
@@ -1055,6 +1106,8 @@ window.handleTypingHintKey = (e) => {
   recordWeak(word);
   playTypeSound('wrong');
 
+  const inp = document.getElementById('type-input');
+  if (inp) inp.readOnly = true;
   const wordColorArea = document.getElementById('word-color-area');
   const typedRowArea  = document.getElementById('typed-row-area');
   if (wordColorArea) {
@@ -1065,11 +1118,7 @@ window.handleTypingHintKey = (e) => {
     typedRowArea.innerHTML = `<span style="color:#ef4444;font-weight:800">正解: ${word.en}</span>`;
   }
 
-  setTimeout(() => {
-    ts.index++;
-    ts.revealing = false;
-    renderTypingHint();
-  }, 1600);
+  setTimeout(() => advanceTypingHint(), 1600);
 };
 
 const TYPING_SKIP_PENALTY_SEC = 180; // スキップ1回につき+3分
@@ -1078,9 +1127,7 @@ window.skipTypingHint = () => {
   const ts = state.typingHintState;
   ts.skips = (ts.skips || 0) + 1;
   toast('⏱ スキップ +3分', 1500);
-  ts.index++;
-  ts.revealing = false;
-  renderTypingHint();
+  advanceTypingHint();
 };
 
 async function showTypingHintResult() {
@@ -1496,16 +1543,17 @@ function buildShooterTargets() {
     animalEl.style.cssText = `font-size:2rem;line-height:1;pointer-events:none;`;
     animalEl.textContent = emoji;
 
+    const isMobile = W < 520;
     const plate = document.createElement('div');
     plate.style.cssText = `background:linear-gradient(135deg,#fef3c7,#fde68a);
-      border:2.5px solid #92400e;border-radius:8px;padding:5px 10px;
-      font-weight:900;font-size:.88rem;color:#78350f;
-      box-shadow:2px 3px 8px rgba(0,0,0,.4);white-space:nowrap;min-width:68px;`;
+      border:2.5px solid #92400e;border-radius:8px;padding:${isMobile ? '4px 6px' : '5px 10px'};
+      font-weight:900;font-size:${isMobile ? '.74rem' : '.88rem'};color:#78350f;
+      box-shadow:2px 3px 8px rgba(0,0,0,.4);white-space:nowrap;min-width:${isMobile ? '48px' : '68px'};`;
 
     wrap.appendChild(animalEl);
     wrap.appendChild(plate);
 
-    const t = { el: wrap, plate, alive: true, wordEn: '' };
+    const t = { el: wrap, plate, alive: true, wordEn: '', cx };
 
     let touched = false;
     wrap.addEventListener('touchstart', e => {
@@ -1550,6 +1598,19 @@ function assignShooterWords() {
     t.alive = true;
     t.el.style.opacity = '1';
     t.el.style.pointerEvents = 'auto';
+  });
+  fixShooterOverflow();
+}
+
+// 札が画面の左右からはみ出さないよう、単語の幅に合わせて位置を補正
+function fixShooterOverflow() {
+  const ss = state.shooterState;
+  if (!ss) return;
+  const W = window.innerWidth;
+  ss.targets.forEach(t => {
+    const half = t.el.offsetWidth / 2;
+    const x = Math.max(half + 4, Math.min(W - half - 4, t.cx));
+    t.el.style.left = x + 'px';
   });
 }
 
@@ -2581,6 +2642,12 @@ function renderPattern() {
       .pat-zone { background:#eef2f7; border:2px solid #cbd5e1; margin-bottom:12px; }
       .pat-card { padding:12px 20px; font-size:1.25rem; font-weight:800; border-radius:10px; cursor:pointer; user-select:none; box-shadow:0 4px 10px rgba(0,0,0,.15); transition:transform .12s; }
       .pat-card:hover { transform:translateY(-3px); }
+      @keyframes patShake {
+        0%,100% { transform: translateX(0); }
+        25% { transform: translateX(-6px); }
+        50% { transform: translateX(6px); }
+        75% { transform: translateX(-4px); }
+      }
       .pat-result { font-size:1.35rem; font-weight:800; min-height:40px; text-align:center; margin:6px 0 14px; }
     </style>
     ${header()}
@@ -2612,12 +2679,31 @@ window.patternMove = (card) => {
   const pool = document.getElementById('pat-pool');
   const zone = document.getElementById('pat-zone');
   if (!pool || !zone) return;
+  const st = state.patternState;
+  const q  = st.list[st.index];
+
   if (card.parentNode === pool) {
+    // 次に置くべき役割と違うカードは置けない（ぶぶー音＋ゆれる）
+    const nextRole = q.order[zone.children.length];
+    if (card.dataset.role !== nextRole) {
+      playSfx('wrong');
+      card.style.animation = 'none';
+      card.offsetHeight; // アニメーションをリセット
+      card.style.animation = 'patShake .3s';
+      const result = document.getElementById('pat-result');
+      if (result) {
+        result.textContent = '❌ その順番じゃないよ！';
+        result.style.color = 'var(--danger)';
+      }
+      return;
+    }
+    playSfx('select');
     zone.appendChild(card);
+    const result = document.getElementById('pat-result');
+    if (result) result.textContent = '';
   } else {
     pool.appendChild(card);
     document.getElementById('pat-result').textContent = '';
-    document.getElementById('pat-next').style.display = 'none';
   }
   patternCheck();
 };
