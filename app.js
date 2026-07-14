@@ -1116,7 +1116,9 @@ async function showTypingHintResult() {
       timeSec, createdAt: Date.now(),
     });
     const snap = await F.getDocs(F.collection(db, 'memoryRecords'));
-    const all = snap.docs.map(d => d.data()).filter(r => r.kind === 'typing' && r.words > 0);
+    // 同じレッスン（の組み合わせ）に取り組んだ記録だけでランキング
+    const all = snap.docs.map(d => d.data())
+      .filter(r => r.kind === 'typing' && r.words > 0 && r.lesson === ts.lesson);
     // 生徒ごとにベスト（1語あたり平均が最小）だけ残す
     const bestMap = {};
     all.forEach(r => {
@@ -1143,13 +1145,13 @@ async function showTypingHintResult() {
         ${skips > 0 ? `<p style="color:#ef4444;font-weight:700;font-size:.9rem;margin-bottom:8px">⏱ スキップ ${skips}回 → +${skips * 3}分 加算（実タイム ${formatMemTime(rawSec * 1000)}）</p>` : ''}
         ${bonus > 0 ? `<p style="color:var(--accent);font-weight:700">パーフェクトボーナス +${bonus}pt 🎉</p>` : ''}
         <div class="pts-earned">+${ts.correct * CONFIG.points.typingCorrect + bonus} pt</div>
-        ${myRank > 0 ? `<p style="font-weight:800;color:#1d4ed8;font-size:1.1rem;margin-top:8px">🏅 あなたは全体 ${myRank}位！（1語平均の速さ）</p>` : ''}
+        ${myRank > 0 ? `<p style="font-weight:800;color:#1d4ed8;font-size:1.1rem;margin-top:8px">🏅 このレッスンで ${myRank}位！</p>` : ''}
       </div>
 
       ${records.length > 0 ? `
       <div class="card" style="padding:0;overflow:hidden;margin-bottom:16px">
-        <div style="padding:14px 16px 6px"><h3 style="color:#1d4ed8">⚡ スピードランキング TOP10</h3>
-        <p style="font-size:.78rem;color:var(--muted)">1語あたりの平均タイムで比較（レッスン数がちがっても公平！）</p></div>
+        <div style="padding:14px 16px 6px"><h3 style="color:#1d4ed8">⚡ ${ts.lesson} ランキング TOP10</h3>
+        <p style="font-size:.78rem;color:var(--muted)">同じレッスンに取り組んだ人の中で、1語平均タイムの速い順</p></div>
         <table class="ranking-table">
           <thead><tr><th>順位</th><th>名前</th><th>学年・組</th><th>語数</th><th>タイム</th><th>1語平均</th></tr></thead>
           <tbody>
