@@ -1396,8 +1396,9 @@ async function showRanking(scope = 'class') {
 
 // ===== ワードシューター（1問ずつ方式・西部劇テーマ） =====
 const SHOOTER_LIVES        = 3;
-const SHOOTER_TOTAL_TARGETS = 12; // 画面に並ぶ的の総数（3列×4行）
+const SHOOTER_TOTAL_TARGETS = 9; // 画面に並ぶ的の総数（3列×3行）
 const SHOOTER_COLS         = 3;
+const SHOOTER_COL_POS      = [0.17, 0.5, 0.83]; // 列の位置（2列目=画面中央）
 const TARGET_COLORS = ['#fbbf24','#f87171','#34d399','#60a5fa','#a78bfa','#f472b6','#fb923c','#4ade80'];
 
 function startShooter(words) {
@@ -1530,7 +1531,8 @@ function buildShooterTargets() {
   for (let idx = 0; idx < total; idx++) {
     const col = idx % cols;
     const row = Math.floor(idx / cols);
-    const cx  = Math.max(60, Math.min(W - 60, cellW * col + cellW / 2));
+    // 2列目が画面中央、1・3列目は中央から等距離（全体をやや内側に寄せる）
+    const cx  = W * (SHOOTER_COL_POS[col] ?? ((col + 0.5) / cols));
     const cy  = Math.max(topOff + 30, Math.min(H - botOff - 40, topOff + cellH * row + cellH / 2));
     const emoji = animals[idx % animals.length];
 
