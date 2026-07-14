@@ -3123,7 +3123,10 @@ function renderTeacherPattern() {
 なぜそれは環境に優しいのですか。 | Why[M] is[V] it[S] eco-friendly?[C]</pre>
 
       <textarea id="pat-input" rows="6" placeholder="私は野球をします。 | I[S] play[V] baseball.[O]"></textarea>
-      <button class="btn-primary" style="margin-top:8px" onclick="addPatternSentences()">➕ まとめて追加</button>
+      <div style="display:flex;gap:10px;margin-top:8px;flex-wrap:wrap">
+        <button class="btn-primary" onclick="addPatternSentences()">➕ まとめて追加</button>
+        <button class="btn-danger" onclick="deleteAllPatterns()">🗑️ このレッスンの文を一括削除</button>
+      </div>
       <p id="pat-msg" style="margin-top:8px;font-size:.9rem;min-height:18px"></p>
 
       <hr style="margin:20px 0;border:none;border-top:1px solid #f1f5f9">
@@ -3305,6 +3308,33 @@ window.copyPatterns = async () => {
     ? `${toCopy.length}文コピーしました！（重複${pats.length - toCopy.length}文はスキップ）`
     : '全て重複のためスキップしました';
   msg.style.color = toCopy.length > 0 ? 'green' : 'orange';
+  loadPatternList();
+};
+
+// 選択中のレッスンの文型パズル文を一括削除
+window.deleteAllPatterns = async () => {
+  const grade  = document.getElementById('pat-grade').value;
+  const cls    = document.getElementById('pat-class').value;
+  const lesson = document.getElementById('pat-lesson').value;
+  const msg    = document.getElementById('pat-msg');
+
+  const pats = await getPatternsByLesson(grade, cls, lesson);
+  if (pats.length === 0) {
+    msg.textContent = 'このレッスンに文は登録されていません';
+    msg.style.color = 'orange';
+    return;
+  }
+  if (!confirm(`${grade} ${cls} ${lesson} の文型パズル ${pats.length}文を全て削除しますか？\nこの操作は元に戻せません。`)) return;
+
+  msg.textContent = '削除中…';
+  msg.style.color = 'orange';
+  const del = F.deleteDoc
+    ? F.deleteDoc
+    : (await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js")).deleteDoc;
+  await Promise.all(pats.map(p => del(F.doc(db, 'words', p.id)).catch(() => {})));
+  _wordsCache.clear();
+  msg.textContent = `${pats.length}文を削除しました`;
+  msg.style.color = 'green';
   loadPatternList();
 };
 
