@@ -2307,9 +2307,10 @@ const PATTERN_QUESTIONS = [
   { pattern: "S + V + O + C",   hint: "【最後の挑戦】「私たちは彼をトムと呼びます。」", cards: [{text:"We",role:"S"},{text:"call",role:"V"},{text:"him",role:"O"},{text:"Tom.",role:"C"}], order: ["S","V","O","C"] },
 ];
 
-const PAT_COLOR  = { S:'#ef4444', V:'#22c55e', O:'#3b82f6', C:'#a855f7', AUX:'#eab308' };
-const PAT_BORDER = { S:'#b91c1c', V:'#15803d', O:'#1d4ed8', C:'#7e22ce', AUX:'#a16207' };
-const PAT_LABEL  = { S:'主語', V:'動詞', O:'目的語', C:'補語', AUX:'助動詞/否定' };
+const PAT_COLOR  = { S:'#ef4444', V:'#22c55e', O:'#3b82f6', C:'#a855f7', AUX:'#eab308', M:'#14b8a6' };
+const PAT_BORDER = { S:'#b91c1c', V:'#15803d', O:'#1d4ed8', C:'#7e22ce', AUX:'#a16207', M:'#0f766e' };
+const PAT_LABEL  = { S:'主語', V:'動詞', O:'目的語', C:'補語', AUX:'助動詞/否定', M:'修飾語' };
+const PAT_ROLES  = Object.keys(PAT_LABEL); // ['S','V','O','C','AUX','M']
 
 // ===== 第1〜第5文型の英文プール（毎回ここからランダム出題） =====
 const S = t => ({ text: t, role: 'S' });
@@ -3108,15 +3109,18 @@ function renderTeacherPattern() {
         <p style="color:#5b21b6;font-size:.85rem;line-height:1.7">
           📌 <strong>入力のしかた</strong>：1行に1文。<br>
           <code>日本語の意味 | 単語[役割] 単語[役割] …</code><br>
-          役割は <strong>S</strong>（主語）／<strong>V</strong>（動詞）／<strong>O</strong>（目的語）／<strong>C</strong>（補語）／<strong>AUX</strong>（助動詞・否定・be動詞）<br>
-          複数の単語をまとめて1枚にできます（例：<code>The apple[S]</code>）。
+          役割は <strong>S</strong>（主語）／<strong>V</strong>（動詞）／<strong>O</strong>（目的語）／<strong>C</strong>（補語）／<strong>AUX</strong>（助動詞・否定・be動詞）／<strong>M</strong>（修飾語：時・場所・疑問詞など）<br>
+          複数の単語をまとめて1枚にできます（例：<code>The apple[S]</code>）。<br>
+          全角の ［Ｓ］ や ｜ で入力しても自動で変換されるので大丈夫です。
         </p>
       </div>
 
       <p style="color:var(--muted);font-size:.85rem;margin-bottom:6px">記入例：</p>
       <pre style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:10px;font-size:.82rem;overflow-x:auto;margin-bottom:12px">私は野球をします。 | I[S] play[V] baseball.[O]
 そのリンゴは甘い。 | The apple[S] is[V] sweet.[C]
-私はテニスをしません。 | I[S] do not[AUX] play[V] tennis.[O]</pre>
+私はテニスをしません。 | I[S] do not[AUX] play[V] tennis.[O]
+昨日、多くの人が大豆肉を買っていました。 | Many people[S] were buying[V] soy meat[O] yesterday.[M]
+なぜそれは環境に優しいのですか。 | Why[M] is[V] it[S] eco-friendly?[C]</pre>
 
       <textarea id="pat-input" rows="6" placeholder="私は野球をします。 | I[S] play[V] baseball.[O]"></textarea>
       <button class="btn-primary" style="margin-top:8px" onclick="addPatternSentences()">➕ まとめて追加</button>
@@ -3152,27 +3156,54 @@ function renderTeacherPattern() {
   `;
 }
 
+// 全角記号を半角に直す（日本語入力のまま打っても大丈夫にする）
+function normalizePatternLine(line) {
+  return String(line)
+    .replace(/［/g, '[').replace(/］/g, ']')   // 全角カッコ
+    .replace(/｜/g, '|')                        // 全角パイプ
+    .replace(/【/g, '[').replace(/】/g, ']')   // 隅付きカッコで書く先生対策
+    .replace(/[Ａ-Ｚａ-ｚ]/g, ch => String.fromCharCode(ch.charCodeAt(0) - 0xFEE0)) // 全角英字→半角
+    .replace(/　/g, ' ');                   // 全角スペース→半角
+}
+
 // 1行をパース： "日本語 | I[S] play[V] baseball.[O]"
-function parsePatternLine(line) {
+// 戻り値: { ok:true, hint, chunks, pattern } または { ok:false, reason }
+function parsePatternLine(rawLine) {
+  const line = normalizePatternLine(rawLine);
   const parts = line.split('|');
-  if (parts.length < 2) return null;
+  if (parts.length < 2) return { ok: false, reason: '「|」（縦棒）がありません' };
   const hint = parts[0].trim();
   const body = parts.slice(1).join('|').trim();
-  if (!hint || !body) return null;
+  if (!hint) return { ok: false, reason: '日本語の意味が空です' };
+  if (!body) return { ok: false, reason: '英文が空です' };
+
+  // カッコの対応チェック
+  const opens = (body.match(/\[/g) || []).length;
+  const closes = (body.match(/\]/g) || []).length;
+  if (opens !== closes) return { ok: false, reason: `[ と ] の数が合いません（[ が${opens}個、] が${closes}個）` };
+  if (opens === 0) return { ok: false, reason: '役割タグ [S] [V] などがありません' };
 
   const chunks = [];
-  const re = /([^\[]+)\[([A-Za-z]+)\]/g;
+  // タグの直後のピリオド・？などは前のカードにくっつける（例: yesterday[M]. → 「yesterday.」）
+  const re = /([^\[\]]+)\[([A-Za-z]+)\]([.,!?;:。、！？'"”）)]*)/g;
   let m;
   while ((m = re.exec(body)) !== null) {
-    const text = m[1].trim();
+    const text = (m[1].trim() + (m[3] || '')).trim();
     const role = m[2].toUpperCase();
-    if (!text) return null;
-    if (!['S','V','O','C','AUX'].includes(role)) return null;
+    if (!m[1].trim()) return { ok: false, reason: `[${m[2]}] の前に単語がありません` };
+    if (!PAT_ROLES.includes(role)) {
+      return { ok: false, reason: `[${m[2]}] は使えない役割です（使えるのは ${PAT_ROLES.join(' / ')}）` };
+    }
     chunks.push({ text, role });
   }
-  if (chunks.length < 2) return null;
+  if (chunks.length < 2) return { ok: false, reason: 'カードが2枚以上必要です（タグ付きの単語が足りません）' };
+
+  // タグの外に文字が残っていないかチェック（句切れミスの早期発見）
+  const leftover = body.replace(re, '').replace(/\s+/g, '');
+  if (leftover) return { ok: false, reason: `タグが付いていない部分があります：「${leftover}」` };
+
   const pattern = chunks.map(c => c.role).join(' + ');
-  return { hint, chunks, pattern };
+  return { ok: true, hint, chunks, pattern };
 }
 
 window.addPatternSentences = async () => {
@@ -3188,7 +3219,7 @@ window.addPatternSentences = async () => {
   let ok = 0; const errors = [];
   for (const line of lines) {
     const parsed = parsePatternLine(line);
-    if (!parsed) { errors.push(line); continue; }
+    if (!parsed.ok) { errors.push({ line, reason: parsed.reason }); continue; }
     await F.addDoc(F.collection(db, 'words'), {
       kind: 'pattern',
       grade, class: cls, lesson,
@@ -3205,7 +3236,9 @@ window.addPatternSentences = async () => {
     msg.style.color = 'green';
     document.getElementById('pat-input').value = '';
   } else {
-    msg.innerHTML = `${ok}文を追加。${errors.length}行は形式エラーでスキップ：<br><span style="color:#b91c1c;font-size:.8rem">${errors.map(e=>e.replace(/</g,'&lt;')).join('<br>')}</span>`;
+    const esc = t => String(t).replace(/</g, '&lt;');
+    msg.innerHTML = `${ok}文を追加。${errors.length}行はスキップしました：<br>` +
+      errors.map(e => `<span style="color:#b91c1c;font-size:.8rem">・${esc(e.line)}<br>　→ <strong>${esc(e.reason)}</strong></span>`).join('<br>');
     msg.style.color = '#b45309';
   }
   loadPatternList();
