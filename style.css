@@ -393,13 +393,14 @@ label { display: block; font-weight: 600; margin-bottom: 6px; font-size: .9rem; 
 .rankup-inner p { color: var(--muted); }
 
 /* ===== ワードシューター ===== */
+/* translate(-50%,-50%) を含めないと中央揃えがアニメーションで消えてしまう */
 @keyframes shTargetIn {
-  0%   { transform: scale(0) rotate(-20deg); opacity: 0; }
-  100% { transform: scale(1) rotate(0deg);   opacity: 1; }
+  0%   { transform: translate(-50%,-50%) scale(0) rotate(-20deg); opacity: 0; }
+  100% { transform: translate(-50%,-50%) scale(1) rotate(0deg);   opacity: 1; }
 }
 @keyframes shTargetOut {
-  0%   { transform: scale(1);   opacity: 1; }
-  100% { transform: scale(0.2); opacity: 0; }
+  0%   { transform: translate(-50%,-50%) scale(1);   opacity: 1; }
+  100% { transform: translate(-50%,-50%) scale(0.2); opacity: 0; }
 }
 @keyframes shTargetPop {
   0%   { transform: scale(0.6); opacity: 0; }
