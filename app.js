@@ -2688,16 +2688,17 @@ window.patternMove = (card) => {
   const q  = st.list[st.index];
 
   if (card.parentNode === pool) {
-    // 次に置くべき役割と違うカードは置けない（ぶぶー音＋ゆれる）
+    // 次に置くべき役割と違うカードは置けない（ぶぶー音＋ゆれる＋タイムペナルティ）
     const nextRole = q.order[zone.children.length];
     if (card.dataset.role !== nextRole) {
       playSfx('wrong');
+      st.penaltyTaps = (st.penaltyTaps || 0) + 1; // 連打対策：1回ごとに+5秒
       card.style.animation = 'none';
       card.offsetHeight; // アニメーションをリセット
       card.style.animation = 'patShake .3s';
       const result = document.getElementById('pat-result');
       if (result) {
-        result.textContent = '❌ その順番じゃないよ！';
+        result.textContent = `❌ その順番じゃないよ！ ⏱ +5秒（合計 +${st.penaltyTaps * 5}秒）`;
         result.style.color = 'var(--danger)';
       }
       return;
@@ -2749,9 +2750,11 @@ window.patternNext = () => {
 async function showPatternResult() {
   const st = state.patternState;
   if (st._timer) clearInterval(st._timer);
-  const timeMs  = Date.now() - st.startTime;
-  const timeSec = timeMs / 1000;
-  const timeStr = formatMemTime(timeMs);
+  const rawSec     = (Date.now() - st.startTime) / 1000;
+  const taps       = st.penaltyTaps || 0;
+  const penaltySec = taps * 5;                // 間違いタップ1回 = +5秒
+  const timeSec    = rawSec + penaltySec;     // ランキングはペナルティ込み
+  const timeStr    = formatMemTime(timeSec * 1000);
   const nQ      = st.list.length;
   const s       = state.student;
   const modeLabel = PATTERN_MODE_LABEL[st.mode] || st.mode;
@@ -2804,7 +2807,8 @@ async function showPatternResult() {
         <h2 style="color:#4338ca;margin-bottom:4px">全問クリア！</h2>
         <p style="color:var(--primary);font-weight:800;margin-bottom:12px">${nick ? nick.name + '／' : ''}${modeLabel}</p>
         <div style="font-size:2.6rem;font-weight:900;color:#1e293b;font-variant-numeric:tabular-nums">${timeStr}</div>
-        <p style="color:var(--muted);margin:6px 0 12px">${nQ}問 ／ 正解 ${st.correct}</p>
+        <p style="color:var(--muted);margin:6px 0 4px">${nQ}問 ／ 正解 ${st.correct}</p>
+        ${taps > 0 ? `<p style="color:#ef4444;font-weight:700;font-size:.9rem;margin-bottom:8px">⏱ まちがい ${taps}回 → +${penaltySec}秒 加算（実タイム ${formatMemTime(rawSec * 1000)}）</p>` : ''}
         ${perfect ? `<p style="color:var(--accent);font-weight:700">パーフェクト！ +${bonus}pt 🎉</p>` : ''}
         <div class="pts-earned">+${st.correct * CONFIG.points.patternCorrect + bonus} pt</div>
         ${myRank > 0 ? `<p style="font-weight:800;color:#4338ca;font-size:1.1rem;margin-top:8px">🏅 このカテゴリで ${myRank}位！</p>` : ''}
