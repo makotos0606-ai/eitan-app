@@ -2688,9 +2688,10 @@ window.patternMove = (card) => {
   const q  = st.list[st.index];
 
   if (card.parentNode === pool) {
-    // 次に置くべき役割と違うカードは置けない（ぶぶー音＋ゆれる＋タイムペナルティ）
-    const nextRole = q.order[zone.children.length];
-    if (card.dataset.role !== nextRole) {
+    // 次に置くべきカードと違うものは置けない（ぶぶー音＋ゆれる＋タイムペナルティ）
+    // 役割だけでなく単語そのものも判定（SVOOでO同士を入れ替えるのを防ぐ）
+    const expected = q.cards[zone.children.length];
+    if (!expected || card.dataset.role !== expected.role || card.textContent.trim() !== expected.text) {
       playSfx('wrong');
       st.penaltyTaps = (st.penaltyTaps || 0) + 1; // 連打対策：1回ごとに+5秒
       card.style.animation = 'none';
@@ -2722,7 +2723,8 @@ function patternCheck() {
   const cards = [...zone.children];
   if (cards.length !== q.order.length) { result.textContent = ''; return; }
 
-  const ok = cards.every((c, i) => c.dataset.role === q.order[i]);
+  const ok = cards.every((c, i) =>
+    c.dataset.role === q.order[i] && c.textContent.trim() === q.cards[i].text);
   if (ok) {
     result.textContent = '⭕ 正解！ Excellent!! ✨';
     result.style.color = 'var(--success)';
