@@ -371,6 +371,80 @@ label { display: block; font-weight: 600; margin-bottom: 6px; font-size: .9rem; 
 }
 @keyframes slideUp { from{opacity:0;transform:translateX(-50%) translateY(20px)} to{opacity:1;transform:translateX(-50%) translateY(0)} }
 
+/* ===== アクティビティ開始カウントダウン ===== */
+.countdown-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 500;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 50% 42%, rgba(255,255,255,.24), transparent 30%),
+    linear-gradient(145deg, #2563eb 0%, #6366f1 52%, #7c3aed 100%);
+}
+.countdown-screen::before,
+.countdown-screen::after {
+  content: '';
+  position: absolute;
+  width: 42vmin;
+  height: 42vmin;
+  border: 3px solid rgba(255,255,255,.12);
+  border-radius: 50%;
+}
+.countdown-screen::before { transform: scale(1.25); }
+.countdown-screen::after { transform: scale(1.8); }
+.countdown-card {
+  position: relative;
+  z-index: 1;
+  min-width: min(88vw, 460px);
+  text-align: center;
+  color: white;
+}
+.countdown-label {
+  display: inline-block;
+  margin-bottom: 8px;
+  padding: 7px 18px;
+  border: 2px solid rgba(255,255,255,.45);
+  border-radius: 999px;
+  background: rgba(255,255,255,.14);
+  font-size: clamp(1rem, 3vw, 1.3rem);
+  font-weight: 800;
+  letter-spacing: .06em;
+}
+.countdown-value {
+  min-height: 1.15em;
+  font-family: 'Arial Black', 'Segoe UI', sans-serif;
+  font-size: clamp(6rem, 27vw, 12rem);
+  font-weight: 900;
+  line-height: 1.05;
+  letter-spacing: -.04em;
+  text-shadow: 0 10px 28px rgba(15,23,42,.38);
+  transform-origin: center;
+}
+.countdown-value.countdown-go {
+  font-size: clamp(3.6rem, 16vw, 7rem);
+  color: #fef08a;
+  letter-spacing: 0;
+}
+.countdown-message {
+  margin-top: 8px;
+  font-size: clamp(1rem, 3vw, 1.25rem);
+  font-weight: 800;
+  letter-spacing: .08em;
+}
+.countdown-pop { animation: countdownPop .58s cubic-bezier(.2,.9,.3,1); }
+@keyframes countdownPop {
+  0% { opacity: 0; transform: scale(.35); }
+  65% { opacity: 1; transform: scale(1.12); }
+  100% { opacity: 1; transform: scale(1); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .countdown-pop { animation: none; }
+}
+
 /* ===== ランクアップ演出 ===== */
 .rankup-popup {
   position: fixed;

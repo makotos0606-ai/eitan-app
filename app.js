@@ -52,6 +52,57 @@ function toast(msg, duration = 2500) {
   setTimeout(() => el.remove(), duration);
 }
 
+// ===== アクティビティ開始前の共通カウントダウン =====
+// token と state.screen の両方を確認し、別画面へ移動した後に古いタイマーが
+// ゲームを開始してしまうのを防ぐ。
+let _countdownToken = 0;
+
+function startCountdown(activityLabel, onStart) {
+  const token = ++_countdownToken;
+  state.screen = 'countdown';
+  render(`
+    <div class="countdown-screen" role="status" aria-live="assertive">
+      <div class="countdown-card">
+        <div class="countdown-label">${activityLabel}</div>
+        <div id="countdown-value" class="countdown-value">3</div>
+        <div id="countdown-message" class="countdown-message">準備してね！</div>
+      </div>
+    </div>
+  `);
+
+  const steps = ['3', '2', '1', 'START!'];
+  let index = 0;
+
+  const showStep = () => {
+    if (token !== _countdownToken || state.screen !== 'countdown') return;
+    const valueEl = document.getElementById('countdown-value');
+    const messageEl = document.getElementById('countdown-message');
+    if (!valueEl) return;
+
+    valueEl.textContent = steps[index];
+    valueEl.classList.remove('countdown-pop', 'countdown-go');
+    void valueEl.offsetWidth; // 同じ要素でアニメーションを再スタート
+    valueEl.classList.add('countdown-pop');
+
+    if (index === steps.length - 1) {
+      valueEl.classList.add('countdown-go');
+      if (messageEl) messageEl.textContent = 'スタート！';
+      playSfx('start');
+      setTimeout(() => {
+        if (token !== _countdownToken || state.screen !== 'countdown') return;
+        onStart();
+      }, 600);
+      return;
+    }
+
+    playSfx('countdown');
+    index++;
+    setTimeout(showStep, 720);
+  };
+
+  showStep();
+}
+
 function getRank(points) {
   for (let i = CONFIG.ranks.length - 1; i >= 0; i--) {
     if (points >= CONFIG.ranks[i].min) return CONFIG.ranks[i];
@@ -599,6 +650,10 @@ function shuffle(arr) {
 }
 
 function startTyping(words) {
+  startCountdown('タイピング実践', () => beginTyping(words));
+}
+
+function beginTyping(words) {
   state.screen = 'typing';
   const list = shuffle(words);
   state.typingState = { list, index: 0, correct: 0, wrong: 0, done: false, hintLevel: 0 };
@@ -823,6 +878,8 @@ window.toggleMute = () => {
 function playSfx(kind = 'type') {
   if (window._sfxMuted) return;
   switch (kind) {
+    case 'countdown': _beep(520, 520, 0.09, 'sine', 0.20); break;
+    case 'start':     _beep(660, 990, 0.16, 'sine', 0.24); break;
     case 'correct': _beep(880, 1320, 0.18, 'sine', 0.25); break;
     case 'wrong':   _beep(220, 140, 0.15, 'square', 0.16); break;
     case 'select':  _beep(520, 620, 0.06, 'triangle', 0.12); break;
@@ -839,6 +896,10 @@ function playSfx(kind = 'type') {
 function playTypeSound(kind = 'type') { playSfx(kind); }
 
 function startTypingHint(words) {
+  startCountdown('タイピング練習', () => beginTypingHint(words));
+}
+
+function beginTypingHint(words) {
   state.screen = 'typing-hint';
   // 同じ単語は1回だけ（複数レッスンの重複を除去）→ 1巡のみ
   const seen = new Set();
@@ -1227,6 +1288,10 @@ async function showTypingHintResult() {
 
 // --- ミニテスト ---
 function startQuiz(words) {
+  startCountdown('ミニテスト', () => beginQuiz(words));
+}
+
+function beginQuiz(words) {
   state.screen = 'quiz';
   const list = shuffle(words);
   state.quizState = { list, index: 0, correct: 0, answered: false };
@@ -1402,8 +1467,12 @@ const SHOOTER_COL_POS      = [0.17, 0.5, 0.83]; // 列の位置（2列目=画面
 const TARGET_COLORS = ['#fbbf24','#f87171','#34d399','#60a5fa','#a78bfa','#f472b6','#fb923c','#4ade80'];
 
 function startShooter(words) {
-  state.screen = 'shooter';
   if (words.length < 3) { toast('単語が3語以上必要です'); showHome(); return; }
+  startCountdown('ワードシューター', () => beginShooter(words));
+}
+
+function beginShooter(words) {
+  state.screen = 'shooter';
   state.shooterState = {
     words: shuffle([...words]),
     wordIndex: 0,       // 現在の問題インデックス
@@ -1791,19 +1860,37 @@ async function endShooter() {
 // ===== 神経衰弱（全カード表示・タイムアタック） =====
 const MEMORY_PAIRS = 8;
 
+// 同じ単語が複数登録されている場合も、内容が同じ英語・日本語なら
+// どの組み合わせを選んでもマッチできる共通キーを作る。
+function memoryMatchKey(word) {
+  const normalize = value => String(value ?? '')
+    .normalize('NFKC')
+    .trim()
+    .replace(/\s+/g, ' ');
+  return `${normalize(word.en).toLowerCase()}\u0000${normalize(word.ja)}`;
+}
+
 function startMemory(words) {
+  startCountdown('神経衰弱', () => beginMemory(words));
+}
+
+function beginMemory(words) {
   state.screen = 'memory';
   const pairCount = Math.min(MEMORY_PAIRS, words.length);
   const selected = shuffle(words).slice(0, pairCount);
 
-  const enCards = selected.map((w, i) => ({ id: `en-${i}`, pairId: i, type: 'en', text: w.en }));
-  const jaCards = selected.map((w, i) => ({ id: `ja-${i}`, pairId: i, type: 'ja', text: w.ja }));
+  const enCards = selected.map((w, i) => ({
+    id: `en-${i}`, type: 'en', text: w.en, matchKey: memoryMatchKey(w)
+  }));
+  const jaCards = selected.map((w, i) => ({
+    id: `ja-${i}`, type: 'ja', text: w.ja, matchKey: memoryMatchKey(w)
+  }));
 
   state.memoryState = {
     allCards: shuffle([...enCards, ...jaCards]), // 英語・日本語を混ぜてシャッフル
     enCards,
     jaCards,
-    matched: new Set(),
+    matched: new Set(), // マッチ済みのカードID（組番号ではなく1枚ずつ管理）
     selected: null,
     misses: 0,
     locked: false,
@@ -1833,11 +1920,11 @@ function formatMemTime(ms) {
 function renderMemory() {
   const ms = state.memoryState;
   const total   = ms.enCards.length;
-  const matched = ms.matched.size;
+  const matched = Math.floor(ms.matched.size / 2);
   const pct     = Math.round((matched / total) * 100);
 
   const cardStyle = (card) => {
-    const isMatched  = ms.matched.has(card.pairId);
+    const isMatched  = ms.matched.has(card.id);
     const isSelected = ms.selected === card.id;
     const isWrong    = ms.wrongPair && ms.wrongPair.includes(card.id);
     if (isMatched)  return `background:#f0fdf4;border-color:#86efac;color:#15803d;opacity:.45;cursor:default;pointer-events:none;`;
@@ -1889,7 +1976,7 @@ window.selectMemCard = (cardId) => {
   if (ms.locked) return; // ミス表示中は操作不可
   const allCards = ms.allCards;
   const card = allCards.find(c => c.id === cardId);
-  if (!card || ms.matched.has(card.pairId)) return;
+  if (!card || ms.matched.has(card.id)) return;
 
   if (!ms.selected) {
     // 1枚目を選択
@@ -1915,14 +2002,15 @@ window.selectMemCard = (cardId) => {
     return;
   }
 
-  if (first.pairId === card.pairId) {
+  if (first.matchKey === card.matchKey) {
     // マッチ！
-    ms.matched.add(card.pairId);
+    ms.matched.add(first.id);
+    ms.matched.add(card.id);
     ms.selected = null;
     bumpDaily();
     playSfx('match');
     renderMemory();
-    if (ms.matched.size === ms.enCards.length) {
+    if (ms.matched.size === ms.allCards.length) {
       // 全ペア完成
       clearInterval(ms.timerInterval);
       const timeMs = Date.now() - ms.startTime;
@@ -2139,7 +2227,10 @@ window.startPOP = () => {
     drawnCard: null,
     phase: 'draw',       // draw | reveal | result
   };
-  renderPOP();
+  startCountdown('POPゲーム', () => {
+    state.screen = 'pop';
+    renderPOP();
+  });
 };
 
 // --- 読み上げ判定の制限時間（秒） ---
@@ -2536,6 +2627,11 @@ window.patternMode = async (mode) => {
 
 // タイム計測付きでセッション開始
 function beginPatternSession(list, mode) {
+  startCountdown('文型パズル', () => startPatternSession(list, mode));
+}
+
+function startPatternSession(list, mode) {
+  state.screen = 'pattern';
   const st = {
     list: shuffle(list), index: 0, correct: 0, solved: false, mode,
     startTime: Date.now(),
